@@ -1,0 +1,538 @@
+/* Derive the board dataset from the site's own published records.
+ *
+ * Note on word boundaries: Python's `\b` is Unicode-aware, so `\bloss\b` does
+ * not match inside "loss值". JavaScript's `\w` is ASCII-only and would match
+ * there, silently reclassifying rows — hence the explicit lookarounds below.
+ */
+(function (global) {
+  "use strict";
+
+  var NB = "[^\\p{L}\\p{N}_]"; // Unicode-aware non-word, standing in for \b
+  function rx(source) { return new RegExp(source, "u"); }
+
+  var PLATFORMS = [
+    [rx("ascend\\s*910c|ascend910_9382|ascend910c|\\b910_9382\\b|\\b910c\\b|^\\s*(?:ascend\\s+npu(?:\\s*\\(device sku not recorded in this lane\\))?|ascend910 as reported by retained native npu-smi; one logical device 0)\\s*$"), "Ascend 910C", "npu"],
+    [rx("ascend\\s*910b"), "Ascend 910B", "npu"],
+    [rx("ascend|npu"), "Ascend NPU", "npu"],
+    [rx("h200|h20z"), "NVIDIA H200", "gpu"],
+    [rx("h100"), "NVIDIA H100", "gpu"],
+    [rx("5090"), "RTX 5090", "gpu"],
+    [rx("5060"), "RTX 5060", "gpu"],
+    [rx("(?<![a-z0-9_])b(?:200|20z)(?![a-z0-9_])"), "NVIDIA B200", "gpu"],
+    [rx("nvidia|cuda|geforce"), "NVIDIA GPU", "gpu"],
+    [rx("cpu|aarch64|x86_64|macos|wsl"), "CPU", "cpu"],
+  ];
+  function platformOf(text) {
+    var low = (text || "").toLowerCase();
+    for (var i = 0; i < PLATFORMS.length; i++)
+      if (PLATFORMS[i][0].test(low)) return [PLATFORMS[i][1], PLATFORMS[i][2]];
+    return [((text || "未记录").trim().slice(0, 26) || "未记录"), "other"];
+  }
+  // Discovery groups device SKUs, never allocation sizes, UUIDs or TP/EP.
+  // Preserve all explicit accelerator SKUs in a cross-platform record.
+  function hardwarePlatforms(text) {
+    var low=String(text || "").toLowerCase();
+    var names=PLATFORMS.filter(function (entry) { return entry[0].test(low); })
+      .map(function (entry) { return entry[1]; });
+    if (names.indexOf("Ascend 910C")>=0 || names.indexOf("Ascend 910B")>=0)
+      names=names.filter(function (name) { return name!=="Ascend NPU"; });
+    if (names.some(function (name) { return name!=="NVIDIA GPU" && /^(NVIDIA |RTX )/.test(name); }))
+      names=names.filter(function (name) { return name!=="NVIDIA GPU"; });
+    // CPU offload in an accelerator environment is not a CPU platform result.
+    if (names.some(function (name) { return name!=="CPU"; }))
+      names=names.filter(function (name) { return name!=="CPU"; });
+    return names.length ? names : [String(text || "未记录").trim() || "未记录"];
+  }
+
+  // What quantity the comparison is about.
+  var SUBJECTS = [
+    ["distribution", rx("词表|分布|distribution|logits|probability mass|top-?k"), "词表分布"],
+    ["score", rx("目标分数|target score|nll|logprob|目标 logprob|score"), "目标分数"],
+    ["gradient", rx("梯度|gradient|grad(?![\\p{L}\\p{N}_])"), "梯度"],
+    ["update", rx("存储更新|参数更新|optimizer|adamw|sgd|更新|update"), "参数/优化器更新"],
+    ["checkpoint", rx("checkpoint|检查点|恢复|resume|restore"), "Checkpoint 往返"],
+    ["tensor", rx("观测张量|activation|tensor|张量|hidden"), "张量/激活"],
+    ["loss", rx("(?<=^|" + NB + ")loss(?![\\p{L}\\p{N}_])|损失"), "Loss"],
+  ];
+  // What single difference the comparison isolates.
+  var AXES = [
+    ["precision", rx("fp32|bf16|fp16|精度|dtype"), "跨精度"],
+    // KV partitioning is an execution difference, but "Native final KV: …" used to
+    // reach the reference axis first on the word "native", filing the two largest
+    // readings in the corpus under the wrong axis. Match the partitioning first.
+    ["exec_mode", rx("分块|chunk\\d|chunk[0-9-]|chunked|partition|paged|prefill|连续训练|恢复|resume|continuous|modes?(?![\\p{L}\\p{N}_])|hooks|observer|on/?off|开关"), "跨执行模式"],
+    ["reference", rx("独立|参考|reference|原生|native"), "原生 ↔ 独立参考"],
+    ["skills", rx("skills"), "Skills 开关"],
+  ];
+  function match(table, text) {
+    var low = (text || "").toLowerCase();
+    for (var i = 0; i < table.length; i++)
+      if (table[i][1].test(low)) return [table[i][0], table[i][2]];
+    return [null, null];
+  }
+
+  var METRICS = [
+    ["max_abs", rx("最大绝对误差|max(imum)? absolute (error|difference)"), "最大绝对误差", "lower"],
+    ["rmse", rx("^rmse|均方根"), "RMSE", "lower"],
+    ["l2", rx("^l2 误差|^l2 error|l2 范数误差"), "L2 误差", "lower"],
+    ["cosine", rx("余弦相似度|cosine similarity"), "余弦相似度", "higher"],
+    ["nll_abs", rx("nll (绝对差|absolute difference)|目标 nll"), "NLL 绝对差", "lower"],
+    ["logprob_mae", rx("logprob mae|logprob 平均绝对|target logprob"), "logprob MAE", "lower"],
+    // "Top-1" is a prefix of "Top-100", so require no following digit. Only the
+    // fraction form is kept: the raw "agreements / positions" count is a
+    // different quantity and must not share a column with a ratio.
+    ["top1", rx("top-?1(?![0-9]).*(agreement fraction|一致率|一致比例)"), "Top-1 一致率", "higher"],
+  ];
+  function metricKey(label) {
+    var low = (label || "").toLowerCase();
+    for (var i = 0; i < METRICS.length; i++)
+      if (METRICS[i][1].test(low)) return [METRICS[i][0], METRICS[i][2], METRICS[i][3]];
+    return [null, null, null];
+  }
+
+  var FRAMEWORKS = ["vLLM", "SGLang", "TRL", "PEFT", "verl", "Megatron", "MindSpeed",
+                    "Transformers", "Accelerate", "PyTorch"];
+  function frameworksOf(sides) {
+    var found = [];
+    sides.forEach(function (side) {
+      (side.libraries || []).forEach(function (lib) {
+        FRAMEWORKS.forEach(function (fw) {
+          if (fw.toLowerCase() === String(lib.name == null ? "" : lib.name).toLowerCase()
+              && found.indexOf(fw) < 0) found.push(fw);
+        });
+      });
+    });
+    // PyTorch/Transformers are near-universal; name them only when nothing sharper exists.
+    var sharp = found.filter(function (f) {
+      return f !== "PyTorch" && f !== "Transformers" && f !== "Accelerate";
+    });
+    return sharp.length ? sharp : found.slice(0, 1);
+  }
+
+  function isPlainObject(v) {
+    return v !== null && typeof v === "object" && !Array.isArray(v);
+  }
+  /* Nested settings as ordered groups, so the UI never prints an object dump. */
+  function flattenSettings(settings, limit) {
+    limit = limit || 30;
+    // A settings value can be an object (a file manifest entry, say). Naming it
+    // by its identifying field keeps the panel readable; dumping every key —
+    // or letting String() produce "[object Object]" — does not.
+    function scalar(value) {
+      if (value === null || value === undefined) return "null";
+      if (Array.isArray(value)) return value.map(scalar).join(", ");
+      if (isPlainObject(value)) {
+        var keys = Object.keys(value);
+        var id = ["name", "path", "file", "id", "label"].filter(function (k) {
+          return typeof value[k] === "string";
+        })[0];
+        if (id) return String(value[id]);
+        return keys.slice(0, 3).map(function (k) {
+          var v = value[k];
+          return k + "=" + (isPlainObject(v) || Array.isArray(v) ? "…" : String(v));
+        }).join(" ");
+      }
+      return String(value);
+    }
+    function render(value) {
+      if (Array.isArray(value)) {
+        if (value.length > 8)
+          return "[" + value.length + " 项] " + value.slice(0, 6).map(scalar).join(", ") + " …";
+        return value.map(scalar).join(", ");
+      }
+      return scalar(value);
+    }
+    var groups = [];
+    function walk(mapping, path) {
+      var fields = [];
+      Object.keys(mapping).forEach(function (key) {
+        var value = mapping[key];
+        if (isPlainObject(value) && Object.keys(value).length) walk(value, path.concat([key]));
+        else fields.push([key, render(value)]);
+      });
+      if (fields.length) groups.push({ group: path.join(" · "), fields: fields.slice(0, limit) });
+    }
+    walk(settings, []);
+    // Python sorts on (group != "", group): the unnamed root group comes first.
+    groups.sort(function (a, b) {
+      var ka = a.group !== "" ? 1 : 0, kb = b.group !== "" ? 1 : 0;
+      if (ka !== kb) return ka - kb;
+      return a.group < b.group ? -1 : a.group > b.group ? 1 : 0;
+    });
+    return groups.slice(0, 10);
+  }
+
+  /* Counter.most_common(): count desc, first-seen order preserved on ties. */
+  function mostCommon(items) {
+    var counts = new Map();
+    items.forEach(function (x) { counts.set(x, (counts.get(x) || 0) + 1); });
+    return Array.from(counts.entries()).sort(function (a, b) { return b[1] - a[1]; });
+  }
+  function median(values) {
+    var s = values.slice().sort(function (a, b) { return a - b; }), n = s.length;
+    if (!n) return null;
+    return n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2;
+  }
+  function mean(values) {
+    return values.reduce(function (sum, value) { return sum + value; }, 0) / values.length;
+  }
+  var isNum = function (v) { return typeof v === "number" && isFinite(v); };
+
+  function repairMeasure(m) {
+    var label = (m.label || "").toLowerCase(), unit = m.unit;
+    var key = /\brmse\b|均方根/.test(label) ? "rmse" : /最大绝对差异/.test(label) ? "max_abs" : metricKey(label)[0];
+    var subject;
+    if (unit === "nat/token" && /\bnll\b/.test(label) && /绝对差|absolute diff/.test(label)) {
+      subject = "目标分数"; key = "nll_abs";
+    } else if ((unit === "nat/token" || unit === "nat") && /logprob/.test(label)) {
+      subject = "目标分数";
+      if (/平均绝对|mean absolute|\bmae\b/.test(label)) key = "logprob_mae";
+    } else if ((unit === "logit" || unit === "absolute") && /\blogits?\b/.test(label)) {
+      subject = "词表分布";
+    } else if ((unit === "梯度值" || unit === "无量纲" || unit === "absolute") && /梯度|gradient/.test(label)) {
+      subject = "梯度";
+    } else if ((unit === "参数值" || unit === "absolute") && /更新|\bupdates?\b/.test(label)) {
+      subject = "参数/优化器更新";
+    } else if (unit === "张量值") {
+      subject = "张量/激活";
+    }
+    // The generic matcher treats some target-logprob labels as MAE. Require
+    // an explicit statistic so a percentile or maximum cannot enter that mean.
+    if (key === "logprob_mae" && !/平均绝对|mean absolute|\bmae\b/.test(label)) return null;
+    return key && subject ? { subject: subject, key: key } : null;
+  }
+
+  function compareRepairs(repairs, relations) {
+    var entities = new Map(((relations || {}).entities || []).map(function (e) { return [e.kind + ":" + e.id, e]; }));
+    var eligible = new Set();
+    ((relations || {}).links || []).forEach(function (link) {
+      if (link.relation !== "verifies") return;
+      var verification = entities.get(link.from.kind + ":" + link.from.id);
+      var candidate = entities.get(link.to.kind + ":" + link.to.id);
+      if (!verification || !candidate || ["not-selected", "selected-for-further-study"].includes(candidate.details.decision) ||
+          !["scoped-checks-passed", "partial"].includes(verification.details.outcome)) return;
+      (verification.details.sources || []).forEach(function (source) {
+        if (source.kind === "repair" && ["/validation/metrics", "/validation/acceptance"].includes(source.pointer)) eligible.add(source.id);
+      });
+    });
+    var grouped = new Map();
+    (repairs.repairs || []).forEach(function (repair) {
+      if (repair.status !== "validated" || !eligible.has(repair.id)) return;
+      var platforms = hardwarePlatforms((repair.environment || {}).hardware);
+      if (platforms.length !== 1 || !PLATFORMS.some(function (entry) { return entry[1] === platforms[0]; })) return;
+      var measured = new Map();
+      ((repair.validation || {}).metrics || []).forEach(function (m) {
+        var measure = repairMeasure(m);
+        if (!measure || !isNum(m.before) || !isNum(m.after)) return;
+        var higher = METRICS.some(function (col) { return col[0] === measure.key && col[3] === "higher"; });
+        if (m.before > (higher ? 1 : Infinity) || m.after > (higher ? 1 : Infinity) ||
+            m.before < (higher ? -1 : 0) || m.after < (higher ? -1 : 0)) return;
+        var id = JSON.stringify([measure.subject, platforms[0], measure.key]);
+        if (!measured.has(id)) measured.set(id, []);
+        measured.get(id).push(m);
+      });
+      // Give each repair record one vote; several readings in a record do not
+      // give that workload more weight in the platform average.
+      measured.forEach(function (values, id) {
+        if (!grouped.has(id)) grouped.set(id, []);
+        grouped.get(id).push({
+          before: mean(values.map(function (m) { return m.before; })),
+          after: mean(values.map(function (m) { return m.after; })),
+        });
+      });
+    });
+    var compare = {};
+    grouped.forEach(function (values, id) {
+      var parts = JSON.parse(id), subject = parts[0], platform = parts[1], key = parts[2];
+      if (!compare[subject]) compare[subject] = {};
+      if (!compare[subject][platform]) compare[subject][platform] = {};
+      compare[subject][platform][key] = {
+        n: values.length, before: mean(values.map(function (m) { return m.before; })),
+        after: mean(values.map(function (m) { return m.after; })),
+      };
+    });
+    return compare;
+  }
+
+  function deriveUpstream(upstream) {
+    var doc = upstream && typeof upstream === "object" ? upstream : {};
+    var items = Array.isArray(doc.contributions) ? doc.contributions : [];
+    var events = Array.isArray(doc.events) ? doc.events : [];
+    var byId = new Map();
+    events.forEach(function (ev) {
+      if (!byId.has(ev.contribution_id)) byId.set(ev.contribution_id, []);
+      byId.get(ev.contribution_id).push(ev);
+    });
+    var contributions = items.map(function (item) {
+      var evs = (byId.get(item.id) || []).slice().sort(function (a, b) {
+        return String(a.date || "").localeCompare(String(b.date || ""));
+      });
+      var latest = evs[evs.length - 1] || null;
+      var find = function (st) { return evs.find(function (e) { return e.status === st; }) || null; };
+      var sub = find("submitted"), mrg = find("merged"), rel = find("released"), cls = find("closed");
+      var rawStatus = latest ? latest.status : "submitted";
+      var state = (rawStatus === "merged" || rawStatus === "released") ? "merged" : (rawStatus === "closed" ? "closed" : "review");
+      return Object.assign({}, item, {
+        events: evs,
+        status: rawStatus,
+        state: state,
+        submitted_at: sub ? sub.date : null,
+        merged_at: mrg ? mrg.date : null,
+        released_at: rel ? rel.date : null,
+        closed_at: cls ? cls.date : null,
+        observed_at: latest ? latest.observed_at : null,
+        merge_commit: (mrg && mrg.commit) || (rel && rel.commit) || null,
+        release_tag: (rel && rel.release) || (mrg && mrg.release) || null,
+      });
+    });
+    var projects = [];
+    contributions.forEach(function (c) {
+      if (c.project && projects.indexOf(c.project) < 0) projects.push(c.project);
+    });
+    return {
+      updated_at: doc.updated_at || "",
+      contributions: contributions,
+      counts: {
+        total: contributions.length,
+        merged: contributions.filter(function (c) { return c.state === "merged"; }).length,
+        review: contributions.filter(function (c) { return c.state === "review"; }).length,
+        closed: contributions.filter(function (c) { return c.state === "closed"; }).length,
+      },
+      projects: projects,
+    };
+  }
+
+  function deriveBoard(data, repairs, relations, upstream) {
+    var evaluations = data.evaluations || [];
+    var rows = [], unclassified = {};
+    var bump = function (k) { unclassified[k] = (unclassified[k] || 0) + 1; };
+
+    evaluations.forEach(function (ev) {
+      var sides = {};
+      (ev.sides || []).forEach(function (s) { sides[s.id] = s; });
+      var sideList = Object.keys(sides).map(function (k) { return sides[k]; });
+      sideList.forEach(function (side) {
+        var p = platformOf(side.hardware || "");
+        side._platform = p[0]; side._kind = p[1];
+      });
+      var fws = frameworksOf(sideList);
+
+      (ev.comparisons || []).forEach(function (cmp) {
+        var picked = (cmp.side_ids || []).map(function (id) { return sides[id]; })
+                                         .filter(Boolean);
+        var text = [cmp.title || "", cmp.scope || "", ev.title || ""]
+          .concat(picked.map(function (s) { return s.label || ""; })).join(" ");
+
+        var sub = match(SUBJECTS, text), subjectKey = sub[0], subject = sub[1];
+        if (!subjectKey) bump("subject");
+
+        var kinds = new Set(picked.map(function (s) { return s._kind; }));
+        var platforms = [];
+        picked.forEach(function (s) {
+          if (platforms.indexOf(s._platform) < 0) platforms.push(s._platform);
+        });
+        var axisKey, axis;
+        if (kinds.size > 1) { axisKey = "platform"; axis = "跨平台"; }
+        else {
+          var ax = match(AXES, text); axisKey = ax[0]; axis = ax[1];
+          if (!axisKey) bump("axis");
+        }
+
+        var metrics = {};
+        (cmp.metrics || []).forEach(function (m) {
+          var mk = metricKey(m.label || ""), key = mk[0], better = mk[2];
+          if (key === null || !isNum(m.value)) return;
+          var value = Number(m.value), old = metrics[key];
+          // Several source metrics can share one canonical id; keep the worst
+          // reading so a row never looks better than it is.
+          if (old === undefined
+              || (better === "lower" && value > old.value)
+              || (better === "higher" && value < old.value))
+            metrics[key] = { value: value, unit: m.unit || "", label: m.label || "", better: better };
+        });
+
+        var observed = 0, expected = 0;
+        (cmp.coverage || []).forEach(function (c) {
+          observed += c.observed || 0; expected += c.expected || 0;
+        });
+
+        rows.push({
+          eval_id: ev.id, date: ev.date || "", task: ev.task || "",
+          status: ev.status || "", model: (ev.model || {}).name || "",
+          eval_title: ev.title || "", title: cmp.title || ev.title || "",
+          scope: cmp.scope || "",
+          subject: subject || "未分类", subject_key: subjectKey || "other",
+          axis: axis || "未分类", axis_key: axisKey || "other",
+          platforms: platforms, pair: platforms.join(" ↔ ") || "—",
+          frameworks: fws, metrics: metrics,
+          coverage: { observed: observed, expected: expected,
+                      ratio: expected ? observed / expected : null },
+          sides: picked.map(function (s) {
+            return {
+              label: s.label || "", platform: s._platform, hardware: s.hardware || "",
+              libraries: (s.libraries || []).slice(0, 8).map(function (l) {
+                return (l.name + " " + (l.version || "")).trim();
+              }),
+              settings: flattenSettings(s.settings || {}),
+            };
+          }),
+          notes: (ev.notes || []).slice(0, 4).map(function (n) {
+            return typeof n === "string" ? n : (n.text || n.label || "");
+          }),
+          evidence: (ev.evidence || []).slice(0, 3).map(function (x) {
+            return { label: x.label || "", url: x.url || "" };
+          }),
+        });
+      });
+    });
+
+    // Hero: a worked example that overturns the naive assumption. Pulled from
+    // the records rather than written by hand, so it cannot drift from them.
+    var hero = null;
+    evaluations.forEach(function (ev) {
+      if (ev.id !== "gemma4-h100-ascend-partitions-20261107") return;
+      var pick = {};
+      (ev.comparisons || []).forEach(function (cmp) {
+        (cmp.metrics || []).forEach(function (m) {
+          if ((m.label || "").indexOf("Native KV global maximum absolute error") === 0)
+            pick[cmp.title] = m.value;
+          if ((cmp.title || "").indexOf("Within-process control: gpu-full-r1 vs gpu-full-r2") === 0
+              && m.label === "Target maximum absolute difference")
+            pick.control = m.value;
+        });
+      });
+      var at = function (k) { return pick[k] === undefined ? null : pick[k]; };
+      hero = {
+        eval_id: ev.id, model: (ev.model || {}).name || "",
+        bars: [
+          { label: "同一张 H100 · 重复跑", value: at("control"), note: "位级一致", kind: "same" },
+          { label: "跨平台 · 同为 token 路径", value: at("Native final KV: gpu-token vs npu-token"),
+            note: "H100 ↔ Ascend", kind: "cross" },
+          { label: "同一张 H100 · 换 KV 分块", value: at("Native final KV: gpu-token vs gpu-chunk63-65"),
+            note: "token vs chunk63-65", kind: "worse" },
+          { label: "同一张 Ascend · 换 KV 分块", value: at("Native final KV: npu-token vs npu-chunk63-65"),
+            note: "token vs chunk63-65", kind: "worse" },
+        ],
+        unit: "KV 最大绝对误差",
+      };
+    });
+
+    // Repairs carry one headline metric with its direction, so the figure never
+    // draws a higher-is-better reading on the same axis as an error.
+    var higher = rx("相似度|similarity|一致率|agreement|covered|通过");
+    (repairs.repairs || []).forEach(function (rp) {
+      var pairs = ((rp.validation || {}).metrics || []).filter(function (m) {
+        return isNum(m.before) && isNum(m.after);
+      });
+      var pickM = null;
+      pairs.forEach(function (m) {                       // Python max(): keeps the first maximum
+        if (pickM === null || Math.abs(m.before) > Math.abs(pickM.before)) pickM = m;
+      });
+      rp.headline = pickM === null ? null : {
+        label: pickM.label || "", unit: pickM.unit || "",
+        before: pickM.before, after: pickM.after,
+        better: higher.test(pickM.label || "") ? "higher" : "lower",
+      };
+      rp.lib = rp.affected_library || rp.library_group_id || "其它";
+    });
+
+    var facet = function (field) {
+      return mostCommon(rows.map(function (r) { return r[field]; }));
+    };
+    // Compare view: per platform × subject × metric, how far that platform sat
+    // from its counterpart. The number describes the pair it took part in,
+    // never the platform on its own.
+    var agg = new Map();
+    rows.forEach(function (r) {
+      new Set(r.platforms).forEach(function (plat) {
+        Object.keys(r.metrics).forEach(function (key) {
+          var k = plat + "\u0000" + r.subject + "\u0000" + key;
+          if (!agg.has(k)) agg.set(k, []);
+          agg.get(k).push(r.metrics[key].value);
+        });
+      });
+    });
+    var compare = {};
+    agg.forEach(function (values, k) {
+      var parts = k.split("\u0000"), plat = parts[0], subject = parts[1], key = parts[2];
+      var better = "lower";
+      METRICS.forEach(function (m) { if (m[0] === key) better = m[3]; });
+      if (!compare[subject]) compare[subject] = {};
+      if (!compare[subject][plat]) compare[subject][plat] = {};
+      compare[subject][plat][key] = {
+        n: values.length, mean: mean(values), median: median(values),
+        worst: better === "lower" ? Math.max.apply(null, values) : Math.min.apply(null, values),
+        better: better,
+      };
+    });
+
+    var metricsTotal = 0;
+    evaluations.forEach(function (e) {
+      (e.comparisons || []).forEach(function (c) { metricsTotal += (c.metrics || []).length; });
+    });
+
+    var entities = relations && relations.entities;
+    var community = Array.isArray(entities) ? {
+      cases: entities.filter(function (e) { return e.kind === "case" && e.details?.category !== "workflow-benchmark"; }).length,
+      issues: entities.filter(function (e) { return e.kind === "issue"; }).length,
+      confirmed_defects: entities.filter(function (e) { return e.kind === "issue" && e.details?.classification === "confirmed-defect"; }).length,
+    } : null;
+    var upstreamBoard = deriveUpstream(upstream);
+    var summary = {
+      updated_at: data.updated_at || "",
+      compare: compare, compare_repairs: compareRepairs(repairs, relations),
+      evaluations: evaluations.length, comparisons: rows.length,
+      metrics_total: metricsTotal,
+      tasks: facet("task"), subjects: facet("subject"), axes: facet("axis"),
+      platforms: mostCommon([].concat.apply([], rows.map(function (r) { return r.platforms; }))),
+      frameworks: mostCommon([].concat.apply([], rows.map(function (r) { return r.frameworks; }))),
+      metric_columns: METRICS.map(function (m) {
+        return { key: m[0], label: m[2], better: m[3],
+                 count: rows.filter(function (r) { return m[0] in r.metrics; }).length };
+      }),
+      unclassified: unclassified,
+      partial: rows.filter(function (r) { return r.status === "partial"; }).length,
+      cross_platform: rows.filter(function (r) { return r.axis_key === "platform"; }).length,
+      hero: hero,
+      community: community,
+      upstream: upstreamBoard.counts,
+    };
+    return { summary: summary, rows: rows, repairs: repairs, upstream: upstreamBoard };
+  }
+
+  function buildBoard(base) {
+    base = base || "./data/";
+    var get = function (name) {
+      return fetch(base + name).then(function (r) {
+        if (!r.ok) throw new Error(name + ": HTTP " + r.status);
+        return r.json();
+      });
+    };
+    var getOptional = function (name) {
+      return fetch(base + name).then(function (r) {
+        if (r.status === 404) return null;
+        if (!r.ok) throw new Error(name + ": HTTP " + r.status);
+        return r.json();
+      });
+    };
+    return Promise.all([get("evaluations.json"), get("repairs.json"), get("content.json"), get("relations.json"), getOptional("upstream.json")])
+      .then(function (documents) {
+        var board=deriveBoard(documents[0], documents[1], documents[3], documents[4]);
+        board.content=Object.fromEntries(documents[2].records.map(function (entry) {
+          return [entry.kind+":"+entry.id,entry.content];
+        }));
+        [["comparison",documents[0].evaluations],["repair",documents[1].repairs]].forEach(function (group) {
+          group[1].forEach(function (record) {
+            if(record.content)board.content[group[0]+":"+record.id]=record.content;
+          });
+        });
+        return board;
+      });
+  }
+
+  global.deriveBoard = deriveBoard;
+  global.buildBoard = buildBoard;
+  global.NumericBridgeHardware = { hardwarePlatforms: hardwarePlatforms };
+  if (typeof module !== "undefined" && module.exports)
+    module.exports = { deriveBoard: deriveBoard, buildBoard: buildBoard, hardwarePlatforms: hardwarePlatforms };
+})(typeof window !== "undefined" ? window : globalThis);
