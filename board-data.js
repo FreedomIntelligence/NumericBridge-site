@@ -530,9 +530,62 @@
       });
   }
 
+  // The optional snapshot is metadata only. Only the published contribution URL
+  // can authorize a lookup; the snapshot never supplies a link or a record.
+  const PUBLIC_PR_MAX_AGE = 15 * 60 * 1000;
+  function publicPRKey(url) {
+    if (typeof url !== "string") return null;
+    const match = /^https:\/\/github\.com\/([a-zA-Z0-9-]+)\/([a-zA-Z0-9_.-]+)\/pull\/([1-9][0-9]*)$/.exec(url);
+    if (!match || match[0] !== url || match[2] === "." || match[2] === "..") return null;
+    return url.toLowerCase();
+  }
+  function publicPRTime(value, utcOnly = false) {
+    if (typeof value !== "string" || !/^\d{4}-\d\d-\d\dT(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d+)?)?(?:Z|[+-]\d\d:\d\d)$/.test(value) || value !== value.trim()) return NaN;
+    if (utcOnly && !/(?:Z|\+00:00)$/.test(value)) return NaN;
+    const time = Date.parse(value);
+    return Number.isFinite(time) && new Date(value.slice(0, 10)).toISOString().slice(0, 10) === value.slice(0, 10) ? time : NaN;
+  }
+  function parsePublicPRStatus(doc, allowed) {
+    if (!isPlainObject(doc) || doc.schema_version !== 1 || !isPlainObject(doc.pull_requests)) return null;
+    const refreshedAt = publicPRTime(doc.refreshed_at, true);
+    if (!Number.isFinite(refreshedAt)) return null;
+    const records = new Map(), seen = new Set();
+    Object.entries(doc.pull_requests).forEach(([url, row]) => {
+      const key = publicPRKey(url);
+      if (!key || !allowed.has(key)) return;
+      // Conflicting case variants cannot choose the displayed status by order.
+      if (seen.has(key)) { records.delete(key); return; }
+      seen.add(key);
+      if (!isPlainObject(row) || !["open", "draft", "merged", "closed"].includes(row.state)
+          || !["passing", "failing", "pending", "unknown"].includes(row.checks)) return;
+      const updatedAt = publicPRTime(row.updated_at), fetchedAt = publicPRTime(row.fetched_at);
+      if (!Number.isFinite(updatedAt) || !Number.isFinite(fetchedAt)) return;
+      records.set(key, { state: row.state, checks: row.checks, updatedAt, fetchedAt });
+    });
+    return { refreshedAt, records };
+  }
+  async function loadPublicPRStatus(contributions) {
+    const allowed = new Set(contributions.map(c => publicPRKey(c.url)).filter(Boolean));
+    if (!allowed.size) return null;
+    try {
+      const response = await fetch("/data/public-pr-status.json", {
+        method: "GET", mode: "same-origin", credentials: "omit", redirect: "error", cache: "no-cache",
+      });
+      if (!response.ok) return null;
+      return parsePublicPRStatus(await response.json(), allowed);
+    } catch {
+      return null;
+    }
+  }
+  function publicPRStatusIsStale(snapshot, row, now = Date.now()) {
+    return now - Math.min(snapshot.refreshedAt, row.fetchedAt) >= PUBLIC_PR_MAX_AGE;
+  }
+  const publicPRStatus = { key: publicPRKey, load: loadPublicPRStatus, isStale: publicPRStatusIsStale };
+
+  global.NumericBridgePublicPRStatus = publicPRStatus;
   global.deriveBoard = deriveBoard;
   global.buildBoard = buildBoard;
   global.NumericBridgeHardware = { hardwarePlatforms: hardwarePlatforms };
   if (typeof module !== "undefined" && module.exports)
-    module.exports = { deriveBoard: deriveBoard, buildBoard: buildBoard, hardwarePlatforms: hardwarePlatforms };
+    module.exports = { deriveBoard: deriveBoard, buildBoard: buildBoard, hardwarePlatforms: hardwarePlatforms, publicPRStatus: publicPRStatus };
 })(typeof window !== "undefined" ? window : globalThis);
