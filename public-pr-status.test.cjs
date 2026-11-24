@@ -8,6 +8,8 @@ const { publicPRStatus } = require("./board-data.js");
 const url = "https://github.com/Published/Repo/pull/17";
 const missing = "https://github.com/published/repo/pull/18";
 const injected = "https://github.com/not-published/repo/pull/91";
+const gitCode5240 = "https://gitcode.com/Ascend/MindSpeed-LLM/merge_requests/5240";
+const gitCode5241 = "https://gitcode.com/Ascend/MindSpeed-LLM/merge_requests/5241";
 const nonGitHub = "https://gitlab.com/published/repo/-/merge_requests/17";
 const now = new Date().toISOString();
 const row = { state: "draft", checks: "failing", updated_at: now, fetched_at: now };
@@ -43,6 +45,29 @@ test("requests one anonymous same-origin GET and matches only canonical publishe
   assert.equal(fetch.mock.callCount(), 1);
   for (const invalid of [url + "/", url + "\n", url + "#review", url.replace("github.com", "github.com.evil.test"), url.replace("https:", "http:")]) {
     assert.equal(publicPRStatus.key(invalid), null);
+  }
+});
+
+test("matches GitCode only to allowlisted canonical GitCode records", async t => {
+  const key = publicPRStatus.key;
+  const supported = { url: gitCode5240, forge: "gitcode" };
+  const otherForge = { url: gitCode5241, forge: "github" };
+  loader(t, artifact({
+    [gitCode5240.toLowerCase()]: { ...row, state: "open", checks: "unknown", url: injected, checks_fetched_at: null },
+    [gitCode5241.toLowerCase()]: { ...row, state: "merged" },
+    [gitCode5240 + "#note"]: { ...row, state: "closed" },
+  }));
+  const snapshot = await publicPRStatus.load([supported, otherForge]);
+  assert.deepEqual([...snapshot.records], [["https://gitcode.com/ascend/mindspeed-llm/merge_requests/5240", {
+    state: "open", checks: "unknown", updatedAt: Date.parse(now), fetchedAt: Date.parse(now),
+  }]]);
+  assert.equal(await publicPRStatus.load([otherForge]), null);
+  assert.equal(key(gitCode5240.toUpperCase(), "gitcode"), key(gitCode5240));
+  for (const invalid of [gitCode5240 + "/", gitCode5240 + "\n", gitCode5240 + "?tab=files",
+    gitCode5240.replace("gitcode.com", "gitcode.com.evil.test"), gitCode5240.replace("gitcode.com", "gitcode.com@elsewhere.test"),
+    gitCode5240.replace("/merge_requests/", "/pulls/"), gitCode5240.replace("/5240", "/05240"),
+    gitCode5240.replace("Ascend", "Ascend%2f.."), gitCode5240.replace("MindSpeed-LLM", "..")]) {
+    assert.equal(key(invalid), null);
   }
 });
 
@@ -191,6 +216,31 @@ test("merged GitHub snapshot updates a submitted card, open drawer, and filters 
   assert.ok(!card.includes(injected));
   assert.equal(submitted.status, "submitted");
   assert.equal(submitted.merged_at, undefined);
+});
+
+test("GitHub and GitCode snapshots hydrate independently with forge labels and published links", async t => {
+  const mindspeed = { ...submitted, id: "mindspeed", url: gitCode5240, number: "!5240", forge: "gitcode", project: "MindSpeed-LLM" };
+  const otherPR = { ...mindspeed, id: "mindspeed-other", url: gitCode5241, number: "!5241" };
+  const { run, cards, els } = upstreamView([mindspeed, submitted, otherPR]);
+  loader(t, artifact({
+    [transformersUrl]: { ...row, state: "open" },
+    [gitCode5240.toLowerCase()]: { ...row, state: "merged", checks: "unknown", updated_at: "2026-11-21T01:27:50+08:00", url: injected },
+    [gitCode5241.toLowerCase()]: { ...row, state: "closed", checks: "unknown" },
+  }));
+  run('upBuilt = true; US.sel = "mindspeed"; paintUpstream(); paintUpstreamDrawer(UPBY.get(US.sel)); loadUpPublicStatus();');
+  await setImmediateAsync();
+  assert.match(cards[0].slots["[data-up-badge]"].innerHTML, /Merged/);
+  assert.match(cards[0].slots["[data-up-public-status]"].innerHTML, /GitCode snapshot · Merged · Checks unknown/);
+  assert.match(cards[1].slots["[data-up-public-status]"].innerHTML, /GitHub snapshot · Open · Checks failing/);
+  assert.match(cards[2].slots["[data-up-public-status]"].innerHTML, /GitCode snapshot · Closed/);
+  assert.match(els.upDrawerPublicStatus.innerHTML, /GitCode snapshot.*PR updated <time datetime="2026-11-20T17:27:50.000Z"/);
+  assert.ok(els.dwFoot.innerHTML.includes('href="' + gitCode5240 + '"'));
+  assert.doesNotMatch(els.dwFoot.innerHTML, /not-published/);
+  assert.equal(run('JSON.stringify(upCounts())'), '{"total":3,"merged":1,"review":1,"closed":1}');
+  run('US.status = "merged"; paintUpstream();');
+  assert.deepEqual(cards.map(card => card.dataset.upId), [mindspeed.id]);
+  assert.equal(mindspeed.status, "submitted");
+  assert.equal(mindspeed.merged_at, undefined);
 });
 
 test("draft and closed affect status buckets while release facts and non-GitHub records stay published", async t => {

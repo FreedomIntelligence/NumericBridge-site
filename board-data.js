@@ -533,11 +533,18 @@
   // The optional snapshot is metadata only. Only the published contribution URL
   // can authorize a lookup; the snapshot never supplies a link or a record.
   const PUBLIC_PR_MAX_AGE = 15 * 60 * 1000;
-  function publicPRKey(url) {
+  const PUBLIC_PR_URLS = [
+    ["github", /^https:\/\/github\.com\/[a-z0-9-]{1,39}\/([a-z0-9_.-]{1,100})\/pull\/[1-9][0-9]{0,11}$/i],
+    ["gitcode", /^https:\/\/gitcode\.com\/[a-z0-9_-]{1,100}\/([a-z0-9_.-]{1,100})\/merge_requests\/[1-9][0-9]{0,11}$/i],
+  ];
+  function publicPRKey(url, forge) {
     if (typeof url !== "string") return null;
-    const match = /^https:\/\/github\.com\/([a-zA-Z0-9-]+)\/([a-zA-Z0-9_.-]+)\/pull\/([1-9][0-9]*)$/.exec(url);
-    if (!match || match[0] !== url || match[2] === "." || match[2] === "..") return null;
-    return url.toLowerCase();
+    for (const [provider, pattern] of PUBLIC_PR_URLS) {
+      if (forge !== undefined && forge !== provider) continue;
+      const match = pattern.exec(url);
+      if (match && match[0] === url && match[1] !== "." && match[1] !== "..") return url.toLowerCase();
+    }
+    return null;
   }
   function publicPRTime(value, utcOnly = false) {
     if (typeof value !== "string" || !/^\d{4}-\d\d-\d\dT(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d+)?)?(?:Z|[+-]\d\d:\d\d)$/.test(value) || value !== value.trim()) return NaN;
@@ -565,7 +572,7 @@
     return { refreshedAt, records };
   }
   async function loadPublicPRStatus(contributions) {
-    const allowed = new Set(contributions.map(c => publicPRKey(c.url)).filter(Boolean));
+    const allowed = new Set(contributions.map(c => publicPRKey(c.url, c.forge)).filter(Boolean));
     if (!allowed.size) return null;
     try {
       const response = await fetch("/data/public-pr-status.json", {
