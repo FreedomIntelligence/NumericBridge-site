@@ -509,7 +509,7 @@
       });
     };
     var getOptional = function (name) {
-      return fetch(base + name).then(function (r) {
+      return fetch(base + name, { cache: "no-cache" }).then(function (r) {
         if (r.status === 404) return null;
         if (!r.ok) throw new Error(name + ": HTTP " + r.status);
         return r.json();

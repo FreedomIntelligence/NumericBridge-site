@@ -81,37 +81,145 @@ test("freshness uses both refresh and fetch times, not old PR update times", asy
   assert.equal(publicPRStatus.isStale({ ...snapshot, refreshedAt: snapshot.refreshedAt - 1000 }, entry, checkAt), true);
 });
 
-test("existing cards and drawer render before hydration; only established status slots change", async t => {
+function upstreamView(contributions) {
   const html = readFileSync(require("node:path").join(__dirname, "index.html"), "utf8");
   for (const script of html.matchAll(/<script>([\s\S]*?)<\/script>/g)) new vm.Script(script[1]);
-  const section = html.slice(html.indexOf("const UPBY ="), html.indexOf("function writeUpQuery()"));
-  const data = { id: "one", url, number: "#17", status: "released", state: "merged", project: "Repo", forge: "github", release_tag: "v1.0", title: "Fix", observed_at: "2026-11-24" };
-  const cardTarget = {}, drawerTarget = {}, els = { dwCrumb: {}, dwBody: {}, dwFoot: {}, dwCopy: {}, upDrawerPublicStatus: drawerTarget };
+  const section = html.slice(html.indexOf("const UPBY ="), html.indexOf("/* ======================================================================\n   platform —"));
+  const doc = { addEventListener() {}, activeElement: null };
+  function element(dataset = {}) {
+    return {
+      dataset, style: {}, attrs: {}, slots: {}, innerHTML: "", textContent: "",
+      classList: { toggle() {} },
+      setAttribute(k, v) { this.attrs[k] = v; },
+      focus() { doc.activeElement = this; },
+      contains(node) { return this === node || this.link === node; },
+    };
+  }
+  const cards = [];
+  const box = element();
+  function insert(index, markup) {
+    const card = element({ upId: /data-up-id="([^"]+)"/.exec(markup)[1] });
+    card.link = element();
+    card.slots["[data-up-badge]"] = { innerHTML: /<span data-up-badge>(<span.*?<\/span>)/.exec(markup)[1] };
+    card.slots["[data-up-public-status]"] = { innerHTML: /<span class="up-public-status" data-up-public-status>(.*?)<\/span>/.exec(markup)?.[1] };
+    card.remove = () => cards.splice(cards.indexOf(card), 1);
+    card.insertAdjacentHTML = (where, content) => {
+      assert.equal(where, "beforebegin");
+      insert(cards.indexOf(card), content);
+    };
+    Object.defineProperty(card, "previousElementSibling", { get: () => cards[cards.indexOf(card) - 1] });
+    cards.splice(index, 0, card);
+  }
+  Object.defineProperty(box, "lastElementChild", { get: () => cards.at(-1) });
+  box.insertAdjacentHTML = (where, markup) => { assert.equal(where, "beforeend"); insert(cards.length, markup); };
+  Object.defineProperty(box, "innerHTML", {
+    get: () => box.slots[".empty"]?.innerHTML,
+    set: markup => { box.slots[".empty"] = { innerHTML: markup, remove: () => delete box.slots[".empty"] }; },
+  });
+  const ids = ("dwCrumb dwBody dwFoot dwCopy dwClose dwPrev dwNext upDrawerBadge upDrawerTimeline upDrawerPublicStatus upDrawerPosition uMergedStat uReviewStat uClr").split(" ");
+  const els = { ...Object.fromEntries(ids.map(id => [id, element()])), uCards: box };
+  const pills = ["", "merged", "review", "closed"].map(us => {
+    const pill = element({ us });
+    pill.slots[".n"] = element();
+    return pill;
+  });
+  const queries = [];
+  const DW = { kind: "upstream", order: [contributions[0].id], idx: 0 };
+  const context = vm.createContext({
+    UPSTREAM: { contributions }, LANG: "en", tx: (zh, en) => en, fmtInt: String, esc: s => String(s ?? ""),
+    ico: () => "", mascot: () => "", byId: id => els[id], $: (selector, node) => node.slots[selector],
+    $$: selector => selector.startsWith("#uStatus") ? pills : selector.startsWith("#uCards") ? [...cards] : [],
+    document: doc, DW, RENDER: {}, dwReturnFocus: null, writeQuery: (...args) => queries.push(args),
+    window: { NumericBridgePublicPRStatus: publicPRStatus, addEventListener() {}, setInterval() {} },
+  });
+  const run = code => vm.runInContext(code, context);
+  run(section);
+  return { run, cards, els, pills, doc, DW, queries };
+}
+
+const transformersUrl = "https://github.com/huggingface/transformers/pull/51042";
+const submitted = { id: "transformers", url: transformersUrl, number: "#51042", status: "submitted", state: "review", project: "Transformers", forge: "github", title: "Fix", submitted_at: "2026-11-20", observed_at: "2026-11-21" };
+const whenUpdated = "2026-11-24T12:00:00Z";
+const setImmediateAsync = () => new Promise(setImmediate);
+
+test("merged GitHub snapshot updates a submitted card, open drawer, and filters without synthesizing a lifecycle event", async t => {
+  const other = { ...submitted, id: "other", url: nonGitHub, forge: "gitlab" };
+  const { run, cards, els, pills, doc, DW, queries } = upstreamView([submitted, other]);
   let deliver;
   const fetch = t.mock.method(globalThis, "fetch", () => new Promise(resolve => { deliver = resolve; }));
-  const sandbox = vm.createContext({
-    UPSTREAM: { contributions: [data] }, data, LANG: "en", tx: (zh, en) => en,
-    esc: s => String(s ?? ""), ico: () => "", byId: id => els[id], $: () => cardTarget,
-    $$: () => [{ dataset: { upId: data.id } }], DW: { kind: "upstream", order: [data.id], idx: 0 },
-    window: { NumericBridgePublicPRStatus: publicPRStatus },
-  });
-  const run = code => vm.runInContext(code, sandbox);
-  run(section);
-  const baseline = run("upCardHtml(data)");
-  run("paintUpstreamDrawer(data); loadUpPublicStatus(); loadUpPublicStatus();");
-  assert.match(baseline, /Released/);
-  assert.match(baseline, /Showing published status only/);
-  assert.match(els.dwBody.innerHTML, /Showing published status only/);
-  assert.ok(baseline.includes('href="' + url + '"'));
-  assert.ok(els.dwFoot.innerHTML.includes('href="' + url + '"'));
+  run('upBuilt = true; US.status = "review"; US.sel = "transformers"; paintUpstream(); paintUpstreamDrawer(UPBY.get(US.sel));');
+  const [original, survivor] = cards;
+  assert.match(original.slots["[data-up-badge]"].innerHTML, /Open/);
+  assert.match(els.dwBody.innerHTML, /upDrawerBadge.*Open/);
+  assert.match(els.dwBody.innerHTML, /Published lifecycle: Submitted · 2026-11-20/);
+  assert.ok(els.dwFoot.innerHTML.includes('href="' + transformersUrl + '"'));
+  assert.equal(pills[1].slots[".n"].textContent, "0");
+  assert.equal(pills[2].slots[".n"].textContent, "2");
+  const body = els.dwBody.innerHTML, foot = els.dwFoot.innerHTML;
+  els.dwCopy.focus();
+  els.dwBody.scrollTop = 120;
+  run('dwReturnFocus = $$("#uCards [data-up-id]")[0].link; loadUpPublicStatus(); loadUpPublicStatus();');
   assert.equal(fetch.mock.callCount(), 1);
-  deliver({ ok: true, json: async () => artifact({ [url]: { ...row, url: injected }, [injected]: row }) });
-  await new Promise(setImmediate);
-  assert.match(cardTarget.innerHTML, /GitHub snapshot · Draft · Checks failing · Fresh · Fetched <time/);
-  assert.match(drawerTarget.innerHTML, /PR updated .*Snapshot refreshed/);
-  const card = run("upCardHtml(data)");
-  assert.match(card, /Released/);
-  assert.ok(card.includes('href="' + url + '"'));
+  deliver({ ok: true, json: async () => artifact({ [transformersUrl]: { ...row, state: "merged", updated_at: whenUpdated, url: injected }, [injected]: row }) });
+  await setImmediateAsync();
+  assert.deepEqual(cards, [survivor], "the review filter removes only the now-merged card");
+  assert.equal(run("dwReturnFocus"), pills[2], "closing the drawer can return focus to the active filter");
+  assert.equal(pills[2].attrs["aria-pressed"], "true");
+  assert.equal(pills[2].slots[".n"].textContent, "1");
+  assert.equal(pills[1].slots[".n"].textContent, "1");
+  assert.equal(els.uMergedStat.textContent, "1");
+  assert.equal(els.uReviewStat.textContent, "1");
+  assert.equal(doc.activeElement, els.dwCopy);
+  assert.equal(els.dwBody.scrollTop, 120);
+  assert.equal(els.dwBody.innerHTML, body);
+  assert.equal(els.dwFoot.innerHTML, foot);
+  assert.equal(DW.order[DW.idx], submitted.id);
+  assert.equal(DW.kind, "upstream");
+  assert.equal(queries.length, 1, "hydration must not rewrite the route");
+  assert.match(els.upDrawerBadge.innerHTML, /Merged/);
+  assert.match(els.upDrawerTimeline.innerHTML, /aria-current="step"><span[^>]+><\/span>Merged<span class="up-st-d">—/);
+  assert.match(els.upDrawerTimeline.innerHTML, /Released<span class="up-st-d">Pending/);
+  assert.doesNotMatch(els.upDrawerTimeline.innerHTML, /11-24/);
+  assert.match(els.upDrawerPublicStatus.innerHTML, /GitHub snapshot · Merged · Checks failing · Fresh · Fetched <time/);
+  assert.match(els.upDrawerPublicStatus.innerHTML, /PR updated .*Snapshot refreshed/);
+  run('US.status = "merged"; paintUpstream();');
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0].dataset.upId, submitted.id);
+  assert.match(cards[0].slots["[data-up-badge]"].innerHTML, /Merged/);
+  const card = run('upCardHtml(UPBY.get("transformers"))');
+  assert.ok(card.includes('href="' + transformersUrl + '"'));
   assert.ok(!card.includes(injected));
-  assert.ok(!run('upCardHtml({ ...data, url: "https://gitlab.com/owner/repo/-/merge_requests/17" })').includes("GitHub snapshot"));
+  assert.equal(submitted.status, "submitted");
+  assert.equal(submitted.merged_at, undefined);
+});
+
+test("draft and closed affect status buckets while release facts and non-GitHub records stay published", async t => {
+  const released = { ...submitted, id: "released", url, status: "released", state: "merged", merged_at: "2026-11-22", released_at: "2026-11-23", release_tag: "v1.0" };
+  const staticClosed = { ...submitted, id: "static", url: nonGitHub, forge: "gitlab", status: "closed", state: "closed", closed_at: "2026-11-23" };
+  const draft = { ...submitted, id: "draft", url: missing };
+  const { run, cards } = upstreamView([submitted, released, staticClosed, draft]);
+  loader(t, artifact({ [transformersUrl]: { ...row, state: "closed", updated_at: whenUpdated }, [url]: { ...row, state: "merged" }, [missing]: row, [nonGitHub]: { ...row, state: "merged" } }));
+  run('DW.kind = null; upBuilt = true; paintUpstream(); loadUpPublicStatus();');
+  const before = [...cards];
+  await setImmediateAsync();
+  assert.deepEqual(cards, before, "unfiltered hydration retains DOM nodes and their links");
+  assert.match(cards[0].slots["[data-up-badge]"].innerHTML, /Closed/);
+  assert.equal(run('JSON.stringify(upCounts())'), '{"total":4,"merged":1,"review":1,"closed":2}');
+  assert.match(run('upBadge(UPBY.get("draft"))'), /Draft/);
+  assert.match(run('upTimeline(UPBY.get("transformers"))'), /aria-current="step"><span[^>]+><\/span>Closed<span class="up-st-d">—/);
+  assert.doesNotMatch(run('upTimeline(UPBY.get("transformers"))'), /11-24/);
+  assert.match(run('upTimeline(UPBY.get("released"))'), /Merged<span class="up-st-d">11-22.*Released<span class="up-st-d">v1.0/);
+  assert.match(run('upBadge(UPBY.get("released"))'), /Released/);
+  assert.match(run('upRecordedLifecycle(UPBY.get("released"))'), /Released · 2026-11-23/);
+  assert.match(run('upBadge(UPBY.get("static"))'), /Closed/);
+  assert.doesNotMatch(run('upCardHtml(UPBY.get("static"))'), /GitHub snapshot|data-up-public-status/);
+  run('US.status = "review"; paintUpstream();');
+  assert.deepEqual(cards.map(card => card.dataset.upId), ["draft"]);
+  run('US.status = "closed"; paintUpstream();');
+  assert.deepEqual(cards.map(card => card.dataset.upId), ["transformers", "static"]);
+  run('upSnapshot.records.set(upPublicStatus.key(UPBY.get("released").url), { state: "open" });');
+  assert.match(run('upBadge(UPBY.get("released"))'), /Released/, "a lagging snapshot cannot undo a confirmed merge");
+  run('upSnapshot = null');
+  assert.match(run('upBadge(UPBY.get("released"))'), /Released/);
+  assert.match(run('upBadge(UPBY.get("transformers"))'), /Open/);
 });

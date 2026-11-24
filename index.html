@@ -1506,7 +1506,7 @@ button.pcard:hover{border-color:var(--ink);transform:translateY(-1px)}
 </aside>
 <div class="tip" id="tip" role="tooltip"></div>
 
-<script src="./board-data.js?v=public-pr-status-v2"></script>
+<script src="./board-data.js?v=public-pr-status-v3"></script>
 <script src="./search.js?v=framework-scope-20261118"></script>
 <script src="./cases.js?v=community-acknowledgments"></script>
 <script>
@@ -4088,11 +4088,33 @@ const upPublicStatus = window.NumericBridgePublicPRStatus;
 let upSnapshot = null, upSnapshotRequested = false, upSnapshotAttempt = 0;
 const UP_FORGE = { github: "GitHub", gitcode: "GitCode", gitlab: "GitLab" };
 const upLoc = v => (v && typeof v === "object") ? (v[LANG] || v.zh || v.en || "") : String(v ?? "");
+function upPublicRow(c) {
+  return upSnapshot?.records.get(upPublicStatus?.key(c.url));
+}
+function upCurrentStatus(c) {
+  // A release is independent of GitHub's PR lifecycle and stays separately verified.
+  if (c.status === "released") return "released";
+  const live = upPublicRow(c)?.state;
+  // A published merge cannot be undone; an older GitHub snapshot can lag it.
+  if (!live || (c.state === "merged" && live !== "merged")) return c.status;
+  return live;
+}
+function upCurrentState(c) {
+  const status = upCurrentStatus(c);
+  return status === "released" ? "merged" : ["merged", "closed"].includes(status) ? status : "review";
+}
+function upCounts() {
+  const counts = { total: UPSTREAM.contributions.length, merged: 0, review: 0, closed: 0 };
+  for (const c of UPSTREAM.contributions) counts[upCurrentState(c)]++;
+  return counts;
+}
+function upStatusLabel(status) {
+  return ({ released: tx("已发布", "Released"), merged: tx("已合并", "Merged"), closed: tx("已关闭", "Closed"), draft: tx("草稿", "Draft"), submitted: tx("已提交", "Submitted") })[status] || tx("审核中", "Open");
+}
 function upBadge(c) {
-  if (c.status === "released") return `<span class="badge ok"><i></i>${tx("已发布", "Released")}</span>`;
-  if (c.status === "merged") return `<span class="badge ok"><i></i>${tx("已合并", "Merged")}</span>`;
-  if (c.status === "closed") return `<span class="badge"><i></i>${tx("已关闭", "Closed")}</span>`;
-  return `<span class="badge warn"><i></i>${tx("审核中", "Open")}</span>`;
+  const status = upCurrentStatus(c);
+  const tone = ["merged", "released"].includes(status) ? " ok" : status === "closed" ? "" : " warn";
+  return `<span class="badge${tone}"><i></i>${upStatusLabel(status === "submitted" ? "open" : status)}</span>`;
 }
 function upPublicTime(ms) {
   const iso = new Date(ms).toISOString();
@@ -4101,7 +4123,7 @@ function upPublicTime(ms) {
 function upPublicStatusHtml(c, detail = false) {
   const key = upPublicStatus?.key(c.url);
   if (!key) return "";
-  const row = upSnapshot?.records.get(key);
+  const row = upPublicRow(c);
   if (!row) return tx("仅显示已发布记录", "Showing published status only");
   const states = { open: tx("开放", "Open"), draft: tx("草稿", "Draft"), merged: tx("已合并", "Merged"), closed: tx("已关闭", "Closed") };
   const checks = { passing: tx("检查通过", "Checks passing"), failing: tx("检查未通过", "Checks failing"), pending: tx("检查待定", "Checks pending"), unknown: tx("检查未知", "Checks unknown") };
@@ -4117,15 +4139,8 @@ function loadUpPublicStatus() {
   upSnapshotRequested = true;
   upPublicStatus.load(UPSTREAM.contributions).then(snapshot => {
     if (snapshot) upSnapshot = snapshot;
-    // Patch only the metadata: keep link targets, focus, and drawer state intact.
-    $$("#uCards [data-up-id]").forEach(card => {
-      const target = $("[data-up-public-status]", card);
-      if (target) target.innerHTML = upPublicStatusHtml(UPBY.get(card.dataset.upId));
-    });
-    if (DW.kind === "upstream") {
-      const target = byId("upDrawerPublicStatus");
-      if (target) target.innerHTML = upPublicStatusHtml(UPBY.get(DW.order[DW.idx]), true);
-    }
+    if (upBuilt) paintUpstream(false);
+    if (DW.kind === "upstream") patchUpstreamDrawer();
   }).finally(() => { upSnapshotRequested = false; });
 }
 function refreshVisibleUpstream() {
@@ -4139,8 +4154,9 @@ if (typeof document !== "undefined") {
   window.setInterval(refreshVisibleUpstream, 60000);
 }
 function upTimeline(c) {
-  const closed = c.state === "closed";
-  const merged = c.state === "merged";
+  const status = upCurrentStatus(c);
+  const closed = status === "closed";
+  const merged = status === "merged" || status === "released";
   const released = c.status === "released";
   const md = d => d ? d.slice(5) : "—";
   const steps = [
@@ -4148,10 +4164,10 @@ function upTimeline(c) {
     { label: tx("提交", "Submitted"), date: md(c.submitted_at), cls: c.submitted_at ? "done" : "" },
     closed
       ? { label: tx("已关闭", "Closed"), date: md(c.closed_at), cls: "closed" }
-      : { label: merged ? tx("合并", "Merged") : tx("审核中", "Review"), date: merged ? md(c.merged_at) : (c.observed_at ? tx(`核对 ${md(c.observed_at)}`, `seen ${md(c.observed_at)}`) : "—"), cls: merged ? "done" : "now" },
-    { label: tx("发布", "Released"), date: released ? (c.release_tag || md(c.released_at)) : tx("待版本", "Pending"), cls: released ? "done" : "" },
+      : { label: merged ? upStatusLabel("merged") : status === "draft" ? upStatusLabel("draft") : tx("审核中", "Review"), date: merged ? md(c.merged_at) : (c.state === "review" && c.observed_at ? tx(`核对 ${md(c.observed_at)}`, `seen ${md(c.observed_at)}`) : "—"), cls: merged ? "done" : "now" },
+    { label: tx("发布", "Released"), date: released ? (c.release_tag || md(c.released_at)) : closed ? "—" : tx("待版本", "Pending"), cls: released ? "done" : "" },
   ];
-  return `<ol class="up-tl" aria-label="${tx("状态进度", "Status timeline")}">${steps.map(s => `<li class="up-st ${s.cls}"><span class="up-st-dot" aria-hidden="true"></span>${esc(s.label)}<span class="up-st-d">${esc(s.date)}</span></li>`).join("")}</ol>`;
+  return `<ol class="up-tl" aria-label="${tx("状态进度", "Status timeline")}">${steps.map((s, i) => `<li class="up-st ${s.cls}"${i === (status === "released" ? 3 : 2) ? ' aria-current="step"' : ""}><span class="up-st-dot" aria-hidden="true"></span>${esc(s.label)}<span class="up-st-d">${esc(s.date)}</span></li>`).join("")}</ol>`;
 }
 function upMetricCardHtml(m, headline) {
   return `<div class="up-mcard">
@@ -4174,7 +4190,7 @@ function upCardHtml(c) {
       <div class="up-meta">
         <span class="up-proj">${esc(c.project)}</span>
         <a class="up-pr" href="${esc(c.url)}" target="_blank" rel="noopener">${esc(c.number)} ↗</a>
-        ${upBadge(c)}
+        <span data-up-badge>${upBadge(c)}</span>
         <span>${esc(UP_FORGE[c.forge] || c.forge)}</span>
         ${dateLabel ? `<span>${esc(dateLabel)}</span>` : ""}
         ${upPublicStatus?.key(c.url) ? `<span class="up-public-status" data-up-public-status>${upPublicStatusHtml(c)}</span>` : ""}
@@ -4185,6 +4201,10 @@ function upCardHtml(c) {
     <div class="up-aside">${lead ? upMetricCardHtml(lead, true) : `<div class="up-vempty">${tx("待关联结果", "No result yet")}</div>`}</div>
     <span class="up-peek" aria-hidden="true">${ico("arrow")}</span>
   </article>`;
+}
+function upRecordedLifecycle(c) {
+  const date = { submitted: c.submitted_at, merged: c.merged_at, closed: c.closed_at, released: c.released_at }[c.status];
+  return upStatusLabel(c.status) + (date ? ` · ${date}` : "");
 }
 function paintUpstreamDrawer(c) {
   if (!c) return;
@@ -4199,12 +4219,12 @@ function paintUpstreamDrawer(c) {
     ...(c.evidence || []).filter(e => e.url && !/^https?:/i.test(e.url)).map(e => `<a href="./${esc(e.url)}" target="_blank" rel="noopener">${esc(upLoc(e.label))}<span>↗</span></a>`),
   ].filter(Boolean).join("");
   byId("dwBody").innerHTML = `
-    <div class="dw-repair-top">${upBadge(c)}${c.release_tag ? `<span class="badge ok">${esc(c.release_tag)}</span>` : ""}<span>${esc(c.repository)}</span></div>
+    <div class="dw-repair-top"><span id="upDrawerBadge">${upBadge(c)}</span>${c.release_tag ? `<span class="badge ok">${esc(c.release_tag)}</span>` : ""}<span>${esc(c.repository)}</span></div>
     <h2 class="dw-title" id="dwTitle">${esc(upLoc(c.title))}</h2>
     <p class="dw-sub">${esc(upLoc(c.summary))}</p>
     <div class="dw-sec"><h4>${tx("状态进度", "Status timeline")}${c.observed_at ? `<span>${tx(`核对至 ${c.observed_at}`, `Observed ${c.observed_at}`)}</span>` : ""}</h4>
-      ${upTimeline(c)}
-      ${upPublicStatus?.key(c.url) ? `<p class="up-dw-note up-public-status" id="upDrawerPublicStatus">${upPublicStatusHtml(c, true)}</p>` : ""}
+      <div id="upDrawerTimeline">${upTimeline(c)}</div>
+      ${upPublicStatus?.key(c.url) ? `<p class="up-dw-note">${tx("已发布记录：", "Published lifecycle: ")}${esc(upRecordedLifecycle(c))}</p><p class="up-dw-note up-public-status" id="upDrawerPublicStatus">${upPublicStatusHtml(c, true)}</p>` : ""}
       ${c.merge_commit ? `<p class="up-dw-note mono">commit ${esc(c.merge_commit)}</p>` : ""}
     </div>
     ${ver && (ver.metrics || []).length ? `<div class="dw-sec"><h4>${tx("复验结果", "Verification")}</h4>
@@ -4221,9 +4241,28 @@ function paintUpstreamDrawer(c) {
     ])}</div>
     <div class="dw-sec"><h4>${tx("关联记录与证据", "Links & evidence")}</h4><div class="evlist">${evLinks}</div></div>`;
   const link = `#/upstream?id=${encodeURIComponent(c.id)}`;
-  byId("dwFoot").innerHTML = `<span class="mono-note">${DW.idx + 1} / ${DW.order.length} · j / k</span>
+  byId("dwFoot").innerHTML = `<span class="mono-note" id="upDrawerPosition">${DW.idx + 1} / ${DW.order.length} · j / k</span>
     <span style="display:flex;gap:8px"><button class="btn sm" type="button" id="dwCopy">${tx("复制链接", "Copy link")}</button><a class="btn sm" href="${esc(c.url)}" target="_blank" rel="noopener">${tx("打开上游 PR", "Open PR")} <span>↗</span></a></span>`;
   byId("dwCopy").onclick = e => copyText(pageUrl(link), e.currentTarget);
+}
+function patchUpstreamDrawer() {
+  const id = DW.order[DW.idx];
+  const c = UPBY.get(id);
+  byId("upDrawerBadge").innerHTML = upBadge(c);
+  byId("upDrawerTimeline").innerHTML = upTimeline(c);
+  const snapshot = byId("upDrawerPublicStatus");
+  if (snapshot) snapshot.innerHTML = upPublicStatusHtml(c, true);
+  const order = upView.map(item => item.id);
+  // A deep-linked or already open PR stays open even if it leaves the filter.
+  DW.order = order.includes(id) ? order : [id];
+  DW.idx = DW.order.indexOf(id);
+  for (const [button, disabled] of [["dwPrev", DW.idx <= 0], ["dwNext", DW.idx >= DW.order.length - 1]]) {
+    const el = byId(button);
+    if (disabled && document.activeElement === el) byId("dwClose").focus({ preventScroll: true });
+    el.disabled = disabled;
+    el.style.opacity = disabled ? .35 : 1;
+  }
+  byId("upDrawerPosition").textContent = `${DW.idx + 1} / ${DW.order.length} · j / k`;
 }
 function writeUpQuery() {
   writeQuery("upstream", { status: US.status, project: US.project, id: US.sel });
@@ -4234,21 +4273,57 @@ function upDrawerMove(id) {
   writeUpQuery();
   if (id) $(`#uCards [data-up-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "nearest" });
 }
-function paintUpstream() {
-  $$("#uStatus [data-us]").forEach(b => b.setAttribute("aria-pressed", String(US.status === b.dataset.us)));
+function paintUpstream(writeURL = true) {
+  const counts = upCounts();
+  let selectedStatus;
+  $$("#uStatus [data-us]").forEach(b => {
+    const s = b.dataset.us;
+    b.setAttribute("aria-pressed", String(US.status === s));
+    if (US.status === s) selectedStatus = b;
+    $(".n", b).textContent = fmtInt(counts[s || "total"]);
+  });
+  byId("uMergedStat").textContent = fmtInt(counts.merged);
+  byId("uReviewStat").textContent = fmtInt(counts.review);
+  byId("uMergedStat").classList.toggle("muted", !counts.merged);
+  byId("uReviewStat").classList.toggle("muted", !!counts.merged);
   $$("#uProj [data-up]").forEach(b => b.setAttribute("aria-pressed", String(US.project === b.dataset.up)));
   byId("uClr").disabled = !US.status && !US.project;
-  upView = UPSTREAM.contributions.filter(c => (!US.status || c.state === US.status) && (!US.project || c.project === US.project));
-  const box = byId("uCards");
-  if (upView.length) {
-    box.innerHTML = upView.map(upCardHtml).join("");
-  } else {
-    const emptyNote = US.status === "merged" && !UPSTREAM.counts.merged
-      ? tx("当前提交均在评审中，合并后将展示合并提交与版本。", "Submitted PRs are under review; merged commits and versions will appear here.")
-      : tx("可切换筛选查看全部提交。", "Adjust filters to view all submissions.");
-    box.innerHTML = `<div class="panel empty">${mascot("empty")}<p class="h3">${tx("暂无匹配记录", "No matching PRs")}</p><p class="note">${emptyNote}</p></div>`;
+  upView = UPSTREAM.contributions.filter(c => (!US.status || upCurrentState(c) === US.status) && (!US.project || c.project === US.project));
+  const box = byId("uCards"), visible = new Set(upView.map(c => c.id));
+  const cards = new Map();
+  for (const card of $$("#uCards [data-up-id]")) {
+    const id = card.dataset.upId;
+    if (visible.has(id)) cards.set(id, card);
+    else {
+      if (card.contains(document.activeElement)) selectedStatus?.focus({ preventScroll: true });
+      if (dwReturnFocus && card.contains(dwReturnFocus)) dwReturnFocus = selectedStatus;
+      card.remove();
+    }
   }
-  writeUpQuery();
+  if (upView.length) {
+    $(".empty", box)?.remove();
+    // Published ordering is stable; insert missing records without moving existing nodes.
+    let next = null;
+    for (let i = upView.length - 1; i >= 0; i--) {
+      const c = upView[i], card = cards.get(c.id);
+      if (card) {
+        card.classList.toggle("active", US.sel === c.id);
+        $("[data-up-badge]", card).innerHTML = upBadge(c);
+        const snapshot = $("[data-up-public-status]", card);
+        if (snapshot) snapshot.innerHTML = upPublicStatusHtml(c);
+        next = card;
+      } else if (next) {
+        next.insertAdjacentHTML("beforebegin", upCardHtml(c));
+        next = next.previousElementSibling;
+      } else {
+        box.insertAdjacentHTML("beforeend", upCardHtml(c));
+        next = box.lastElementChild;
+      }
+    }
+  } else if (!$(".empty", box)) {
+    box.innerHTML = `<div class="panel empty">${mascot("empty")}<p class="h3">${tx("暂无匹配记录", "No matching PRs")}</p><p class="note">${tx("可切换筛选查看全部提交。", "Adjust filters to view all submissions.")}</p></div>`;
+  }
+  if (writeURL) writeUpQuery();
 }
 RENDER.upstream = function renderUpstream(h) {
   const st = h.q.get("status") || "", pr = h.q.get("project") || "";
@@ -4257,7 +4332,7 @@ RENDER.upstream = function renderUpstream(h) {
   US.sel = UPBY.has(h.q.get("id")) ? h.q.get("id") : null;
   if (!upBuilt) {
     upBuilt = true;
-    const c = UPSTREAM.counts;
+    const c = upCounts();
     const statuses = [
       ["", tx("全部", "All"), c.total],
       ["merged", tx("已合并", "Merged"), c.merged],
@@ -4274,8 +4349,8 @@ RENDER.upstream = function renderUpstream(h) {
         </div>
       </header>
       <dl class="home-stats up-stats">
-        <div class="home-stat"><dt>${tx("已合并 PR", "Merged PRs")}</dt><dd class="home-stat-value${c.merged ? "" : " muted"}">${fmtInt(c.merged)}</dd></div>
-        <div class="home-stat"><dt>${tx("审核中", "Under review")}</dt><dd class="home-stat-value${c.merged ? " muted" : ""}">${fmtInt(c.review)}</dd></div>
+        <div class="home-stat"><dt>${tx("已合并 PR", "Merged PRs")}</dt><dd id="uMergedStat" class="home-stat-value${c.merged ? "" : " muted"}">${fmtInt(c.merged)}</dd></div>
+        <div class="home-stat"><dt>${tx("审核中", "Under review")}</dt><dd id="uReviewStat" class="home-stat-value${c.merged ? " muted" : ""}">${fmtInt(c.review)}</dd></div>
         <div class="home-stat"><dt>${tx("上游项目", "Projects")}</dt><dd class="home-stat-value muted">${fmtInt(UPSTREAM.projects.length)}</dd><dd class="home-stat-note">${esc(UPSTREAM.projects.join(" · ") || "—")}</dd></div>
       </dl>
       <div class="cmp-filters">
@@ -4287,7 +4362,7 @@ RENDER.upstream = function renderUpstream(h) {
         <div class="up-cards" id="uCards"></div>
       </section>
       <div class="up-foot-note">
-        <p class="cmp-note" style="margin:0">${tx("统计、筛选和时间线以已发布记录为准；GitHub 快照仅供参考。历史缺陷回移植与复验见", "Counts, filters and timelines use published records; GitHub snapshots are supplementary. Historical defect backports live in")} <a class="link" href="#/repairs">${tx("修复记录", "Repair Records")} <span aria-hidden="true">→</span></a></p>
+        <p class="cmp-note" style="margin:0">${tx("GitHub 快照可用时用于显示 PR 状态、筛选和统计；日期、版本和关联证据来自已发布记录。历史缺陷回移植与复验见", "When available, GitHub snapshots supply PR status for badges, filters and counts. Dates, releases and linked evidence come from published records. Historical defect backports live in")} <a class="link" href="#/repairs">${tx("修复记录", "Repair Records")} <span aria-hidden="true">→</span></a></p>
         <a class="btn sm" href="./data/upstream.json" download>upstream.json <span aria-hidden="true">↓</span></a>
       </div>
     </div>`;
