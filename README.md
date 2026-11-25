@@ -23,6 +23,15 @@ once per minute.
 Missing or invalid data leaves the published links, statuses, and history
 intact. The frontend never requests status directly from GitHub.
 
-Run the focused frontend tests with `node --test public-pr-status.test.cjs`.
+The [anonymous submission page](submit.html) accepts the original locally prepared
+`draft-<sha256>.json` for `https://numericbridge.com/v1/public-submissions`. It
+reviews the new anonymous draft locally and sends the exact file bytes plus
+`X-Draft-SHA256` only after confirmation. The site proxies same-origin
+`POST /v1/public-submissions` and `GET /v1/public-submissions/{receipt_id}`; the
+latter uses the receipt-scoped bearer token. The downloaded private receipt JSON
+contains the token; keep it private and do not commit or share it. The page does
+not persist the token. A receipt means queued for review, not published.
+
+Run the focused frontend tests with `node --test *.test.cjs`.
 
 Public assets retain the attribution notices in [assets](assets/README.md).

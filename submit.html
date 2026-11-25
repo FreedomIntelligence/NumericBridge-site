@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>匿名提交 · NumericBridge</title>
+  <link rel="stylesheet" href="./styles.css">
+  <style>
+    main{padding-block:2rem 3rem;line-height:1.6}
+    section{margin-block:2rem}
+    label,input[type=file]{display:block}
+    input[type=file]{max-width:100%}
+    button{padding:.4em .8em}
+    pre{background:var(--paper);border:1px solid var(--line);padding:.75rem;max-height:24rem;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
+    code,h3{overflow-wrap:anywhere}
+  </style>
+  <script src="./submit.js" defer></script>
+</head>
+<body>
+  <header class="site-header wrap">
+    <a class="brand" href="./" aria-label="NumericBridge 首页"><span class="brand-mark" aria-hidden="true">N<span>·</span></span><span>NumericBridge<span class="brand-sub">PRECISION ENGINEERING</span></span></a>
+  </header>
+  <main class="wrap">
+    <h1>匿名提交</h1>
+    <p>请选择为 <code>https://numericbridge.com/v1/public-submissions</code> 在本地生成的原始草稿 JSON（<code>draft-…json</code>）。不要复制或重新保存预览。这里只接受新的匿名提交，不接受替换已有提交。</p>
+    <p>预览只在本机进行；确认并点击发送后才会上传原文件。请勿发送密钥、个人资料或其他不宜公开的信息。收到回执只表示已进入审核流程，不表示已发布。</p>
+    <noscript><p>本页面需要 JavaScript 才能在本地预览和确认草稿。</p></noscript>
+    <section aria-labelledby="draft-heading">
+      <h2 id="draft-heading">检查并发送草稿</h2>
+      <label for="draft-file">原始草稿 JSON（最多 1.25 MiB）</label>
+      <input id="draft-file" type="file" accept=".json,application/json" disabled>
+      <p id="submit-message" role="status"></p>
+      <div id="draft-preview" hidden>
+        <h3 id="draft-title"></h3>
+        <p>SHA-256：<code id="draft-digest"></code></p>
+        <p id="preview-label">完整草稿内容（只读）</p>
+        <pre id="draft-content" tabindex="0" role="region" aria-labelledby="preview-label"></pre>
+        <p><label><input id="confirm-draft" type="checkbox" autocomplete="off"> 我已检查完整草稿，确认将此文件原样匿名发送给 NumericBridge 审核。</label></p>
+        <button id="send-draft" type="button" disabled>发送草稿</button>
+      </div>
+    </section>
+    <section id="receipt" aria-labelledby="receipt-heading" hidden>
+      <h2 id="receipt-heading">最近一次提交的回执</h2>
+      <p id="receipt-label" tabindex="-1"></p>
+      <p>下载文件包含查询所需的私密凭据。请保存在私密位置，不要公开、转发或上传该文件。关闭或刷新页面后仍可用该文件查询。</p>
+      <button id="download-receipt" type="button">下载私密回执 JSON</button>
+    </section>
+    <section aria-labelledby="lookup-heading">
+      <h2 id="lookup-heading">查询审核状态</h2>
+      <p id="lookup-help">选择下载的私密回执 JSON，再点击查询。查询仅向本站发送回执编号及其查询凭据，不上传文件。</p>
+      <label for="receipt-file">私密回执 JSON</label>
+      <input id="receipt-file" type="file" accept=".json,application/json" aria-describedby="lookup-help" disabled>
+      <p><button id="lookup-status" type="button" disabled>查询状态</button></p>
+      <p id="lookup-result" role="status"></p>
+    </section>
+  </main>
+</body>
+</html>

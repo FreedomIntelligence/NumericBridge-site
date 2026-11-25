@@ -1490,7 +1490,7 @@ button.pcard:hover{border-color:var(--ink);transform:translateY(-1px)}
 <footer class="foot"><div class="wrap">
   <a class="brand" href="#/"><svg class="brand-mark" viewBox="0 0 48 48" aria-hidden="true"><path d="M5 26Q24 -2 43 26" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round"/><path d="M13 16.7V26M35 16.7V26M19 13V26M29 13V26" stroke="currentColor" stroke-width="1.7"/><rect x="7.5" y="32.5" width="4.5" height="5.5" rx=".8" fill="currentColor"/><rect x="36" y="32.5" width="4.5" height="5.5" rx=".8" fill="currentColor"/><rect x="4" y="26" width="7" height="6.5" rx="1" fill="currentColor"/><rect x="12.25" y="26" width="7" height="6.5" rx="1" fill="currentColor"/><rect x="28.75" y="26" width="7" height="6.5" rx="1" fill="currentColor"/><rect x="37" y="26" width="7" height="6.5" rx="1" fill="currentColor"/><rect x="20.5" y="22" width="7" height="6.5" rx="1" fill="var(--red)"/></svg><span><b>NumericBridge</b><small>cross-stack numerics</small></span></a>
   <span id="footNote">跨硬件与软件栈的精度评测与修复记录。</span>
-  <span class="foot-links"><a href="#/acknowledgments" id="footCredits">社区鸣谢</a><a href="#/cite" id="footCite">引用与数据</a><a href="#top" id="toTop">回到顶部 ↑</a></span>
+  <span class="foot-links"><a href="#/acknowledgments" id="footCredits">社区鸣谢</a><a href="#/cite" id="footCite">引用与数据</a><a href="./submit.html" id="footSubmit">匿名提交</a><a href="#top" id="toTop">回到顶部 ↑</a></span>
 </div></footer>
 
 <div class="scrim" id="scrim"></div>
@@ -4699,7 +4699,7 @@ if (LANG === "en") {
   const NAV_EN = { "": "Home", cases: "Cases", compare: "Hardware Comparison", upstream: "Upstream PRs", how: "Framework Implementation" };
   $$("#nav a").forEach(a => { a.textContent = NAV_EN[a.dataset.route] ?? a.textContent; });
   const setT = (id, t) => { const el = byId(id); if (el) el.textContent = t; };
-  setT("footCite", "Cite & data"); setT("footCredits", "Community acknowledgments"); setT("toTop", "Back to top ↑");
+  setT("footCite", "Cite & data"); setT("footCredits", "Community acknowledgments"); setT("footSubmit", "Submit anonymously"); setT("toTop", "Back to top ↑");
   setT("footNote", "Precision evaluations and repairs across hardware and software stacks.");
   byId("csv").innerHTML = "Export CSV <span>↓</span>";
   byId("theme").title = "Toggle theme"; byId("theme").setAttribute("aria-label", "Toggle theme");
