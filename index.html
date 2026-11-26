@@ -1212,10 +1212,10 @@ a.dp-side:hover{border-color:var(--ink)}
 .up-public-status .up-stale{color:var(--t2);font-weight:600}
 .up-card .badge i,.dw-repair-top .badge i{width:6px;height:6px;border-radius:50%;background:currentColor;display:inline-block}
 .up-title{margin:7px 0 0;font-size:17px;font-weight:600;line-height:1.38;letter-spacing:-.015em;overflow-wrap:anywhere}
-.up-tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.up-tags{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:10px}
 .up-tag{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border:1px solid var(--hair);border-radius:4px;background:var(--wash);font:11px/1.45 var(--mono);color:var(--muted)}
-.up-tag.acc{color:var(--p-acc)}
-.up-tag.gpu{color:var(--p-gpu)}
+.up-tag-acc{color:var(--p-acc)}
+.up-tag-gpu{color:var(--p-gpu)}
 .up-aside{min-width:0}
 .up-mcard{border:1px solid var(--hair);border-radius:6px;background:var(--wash);padding:10px 13px}
 .up-ml{font-size:11.5px;color:var(--muted)}
@@ -4365,7 +4365,7 @@ function upCardHtml(c) {
   const lead = c.verification?.metrics?.[0] || null;
   const dateLabel = c.merged_at ? tx(`合并 ${c.merged_at}`, `merged ${c.merged_at}`) : (c.submitted_at || "");
   const tags = [
-    ...(c.hardware || []).map(hw => `<span class="up-tag ${famOf(hw)}">${esc(platDisp(hw))}</span>`),
+    ...(c.hardware || []).map(hw => `<span class="up-tag up-tag-${famOf(hw)}">${esc(platDisp(hw))}</span>`),
     c.task ? `<span class="up-tag">${esc(TASK[c.task] || c.task)}</span>` : "",
     c.model ? `<span class="up-tag">${esc(c.model)}</span>` : "",
     c.release_tag ? `<span class="badge ok">${esc(c.release_tag)}</span>` : "",
@@ -4383,7 +4383,7 @@ function upCardHtml(c) {
       <h3 class="up-title">${esc(upLoc(c.title))}</h3>
       ${tags ? `<div class="up-tags">${tags}</div>` : ""}
     </div>
-    <div class="up-aside">${lead ? upMetricCardHtml(lead, true) : `<div class="up-vempty">${tx("待关联结果", "No result yet")}</div>`}</div>
+    <div class="up-aside">${lead ? upMetricCardHtml(lead, true) : `<div class="up-vempty">${tx("暂无公开验证结果", "No public verification result")}</div>`}</div>
     <span class="up-peek" aria-hidden="true">${ico("arrow")}</span>
   </article>`;
 }
