@@ -439,7 +439,7 @@
     root.innerHTML=`<div class="wrap lc-page">
       <header class="lc-intro"><h1 class="work-title" tabindex="-1"><span class="work-title-mark">${icon('book')}</span><span>${tx('精度案例库','Precision Case Library')}</span></h1><a class="link" href="#/records">${tx('查看全部记录','Browse all records')} <span aria-hidden="true">→</span></a></header>
       <div class="lc-discovery"><aside class="lc-demand" aria-label="${tx('目标配置','Target configuration')}"><div class="lc-demand-head"><h2>${icon('sliders')}${tx('目标配置','Target configuration')}</h2><button type="button" class="btn sm ghost" data-reset>${icon('cycle')}${tx('重置','Reset')}</button></div><div class="lc-selectors"></div></aside>
-      <section class="lc-results" aria-label="${tx('配置结果','Configuration results')}"><section class="lc-recommendation" aria-live="polite"></section><section class="lc-problems lc-related"><h2>${tx('相关问题','Related issues')}</h2><div class="lc-list"></div></section><section class="lc-problems" data-model-records></section></section></div>
+      <section class="lc-results" aria-label="${tx('配置结果','Configuration results')}"><section class="lc-recommendation" aria-live="polite"></section><section class="lc-problems lc-related"><h2>${tx('相关问题','Related issues')}</h2><div class="lc-module-body"><div class="lc-list"></div></div></section><section class="lc-problems" data-model-records></section></section></div>
       <dialog class="lc-option-dialog" aria-labelledby="lc-option-title"><div class="lc-modal-bar"><h2 id="lc-option-title"></h2><button type="button" class="iconbtn" data-options-close aria-label="${tx('关闭选项','Close options')}">×</button></div><div class="lc-option-body"><label class="lc-option-search"><svg class="lc-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg><span class="sr">${tx('搜索选项','Search options')}</span><input type="search" data-options-search placeholder="${tx('搜索或输入名称','Search or enter a name')}"></label><div class="lc-option-grid" data-options-list></div></div></dialog>
       <dialog class="lc-case-dialog" aria-labelledby="lc-case-title"><div class="lc-modal-bar"><span>${tx('案例详情','Case detail')}</span><div class="lc-detail-actions"><button class="btn sm" type="button" data-copy>${tx('复制链接','Copy link')}</button><button type="button" class="iconbtn" data-detail-close aria-label="${tx('关闭案例详情','Close case detail')}">×</button></div></div><article class="lc-detail" id="lc-detail"></article></dialog></div>`;
     const list=root.querySelector('.lc-list'),detail=root.querySelector('.lc-detail'),dialog=root.querySelector('.lc-case-dialog'),optionDialog=root.querySelector('.lc-option-dialog');
@@ -865,6 +865,7 @@
     const evaluationsPerPage=8;
     let evaluationFilter=history.state?.numericBridgeEvaluation?.filter||'';
     let evaluationPage=evaluationFilter?history.state.numericBridgeEvaluation.page:0;
+    const moduleEmpty=text=>`<p class="lc-module-empty">${esc(text)}</p>`;
     function render(syncURL=true) {
       const filterKey=JSON.stringify(configurationFields.map(field=>state[field]));
       if(filterKey!==evaluationFilter){evaluationFilter=filterKey;evaluationPage=0;}
@@ -874,7 +875,7 @@
       const issues=configurationIssues(index,recommendation?{...state,version:recommendation.library.version||''}:state);
       const ready=['hardware','model','library'].every(field=>state[field]);
       const section=root.querySelector('.lc-recommendation');
-      section.innerHTML=`<h2>${tx('推荐配置','Recommended configuration')}${showingExample?` <span class="lc-badge" data-example-label>${tx('示例','Example')}</span>`:''}</h2>`+(recommendation?(()=>{
+      section.innerHTML=`<h2>${tx('推荐配置','Recommended configuration')}${showingExample?` <span class="lc-badge" data-example-label>${tx('示例','Example')}</span>`:''}</h2><div class="lc-module-body">`+(recommendation?(()=>{
         const {case:c,config,library,solution}=recommendation;
         const version=libraryVersion(library),requested=requestedVersion(state.version);
         const details=solution?'':`<button class="link lc-detail-link" type="button" data-case="${esc(c.row.id)}" aria-haspopup="dialog">${tx('配置与验证详情','Configuration & verification')} ↗</button>`;
@@ -882,11 +883,11 @@
           ${recommendation.differences.includes('version')?`<p class="lc-version-change">${version&&version!==requested?`${tx('版本调整','Version change')}: ${esc(requested)} → ${esc(version)}`:tx('已显示其他版本的记录','Showing records for a different version')}</p>`:''}
           <dl class="lc-recommend-config"><div><dt>${icon('chip')}${tx('硬件','Hardware')}</dt><dd title="${esc(config.hardware)}">${esc(state.hardware)}</dd></div><div><dt>${icon('layers')}${tx('实测模型','Tested model')}</dt><dd>${esc(config.model)}</dd></div><div><dt>${icon('target')}${tx('任务','Task')}</dt><dd>${esc(taskLabel(state.task||config.tasks[0]||tx('未记录','Not recorded')))}</dd></div></dl>
           <section class="lc-stack" aria-label="${tx('库版本搭配','Library version combination')}"><h4>${tx('库版本搭配','Library version combination')}</h4><dl class="lc-recommend-config">${config.libraries.map(lib=>`<div><dt>${esc(lib.name)}</dt><dd>${esc(libraryVersion(lib)||'—')}</dd></div>`).join('')}</dl></section>`;
-      })():!ready?`<p class="lc-placeholder">${tx('下方可浏览当前筛选条件下的实测记录。要获取具体推荐，请指定硬件、模型和框架。','Browse measured results for the current filters below. For a specific recommendation, select hardware, model and framework.')}</p>`:
+      })():!ready?moduleEmpty(tx('暂时没有推荐配置','No recommended configuration yet')):
         lookup.recommendation_gaps.includes('specific-model-required-for-recommendation')?`<button class="btn sm" type="button" data-pick-model>${tx('选择具体型号','Select a specific model')}</button>`:
-        `<p class="lc-placeholder">${tx('暂无可推荐组合','No supported recommendation')}</p>`);
+        moduleEmpty(tx('暂时没有推荐配置','No recommended configuration yet')))+`</div>`;
       section.querySelector('[data-pick-model]')?.addEventListener('click',event=>openOptions('model',event.currentTarget));
-      if(!recommendation&&lookup.alternatives.length)section.insertAdjacentHTML('beforeend',`<button class="btn sm" type="button" data-show-alternatives>${tx('查看其他版本','View other versions')}</button>`);
+      if(!recommendation&&lookup.alternatives.length)section.querySelector('.lc-module-body').insertAdjacentHTML('beforeend',`<button class="btn sm" type="button" data-show-alternatives>${tx('查看其他版本','View other versions')}</button>`);
       section.querySelector('[data-show-alternatives]')?.addEventListener('click',()=>{
         allowAlternatives=true;render();
         const target=section.querySelector('h2');target.tabIndex=-1;focusVisible(target);
@@ -898,6 +899,9 @@
         const meta=[config.model,...(versions.length?versions:[state.library]),note].filter(Boolean).map(esc).join(' · ');
         return `<button class="lc-problem" type="button" data-case="${esc(c.row.id)}" data-issue="${esc(issue.id)}" aria-haspopup="dialog" aria-expanded="false"><strong>${esc(text.title)}</strong><span class="lc-problem-meta">${meta}</span>${resolutionBadge(resolution)}<span class="lc-row-arrow" title="${tx('查看详情','View details')}">${icon('arrow')}</span></button>`;
       }).join('');
+      const issueBody=list.parentElement;
+      issueBody.querySelector('.lc-module-empty')?.remove();
+      if(!issues.length)issueBody.insertAdjacentHTML('beforeend',moduleEmpty(tx('暂时没有相关的问题','No related issues yet')));
       const records=root.querySelector('[data-model-records]');
       const evaluations=filterCases(index,state).filter(c=>c.category!=='workflow-benchmark').flatMap(c=>{
         const matches=new Map();
@@ -917,7 +921,7 @@
       const first=evaluationPage*evaluationsPerPage;
       records.innerHTML=`<h2>${tx('评测记录','Evaluations')} <span class="lc-count">${evaluations.length}</span></h2>${ordered.length?
         `<div class="lc-evaluation-page${pageCount>1?' lc-multipage':''}">${evaluationList(ordered.slice(first,first+evaluationsPerPage))}</div>`:
-        `<p class="lc-compact-empty">${tx('暂无符合当前条件的评测记录。','No evaluation records match these filters.')}</p>`}
+        moduleEmpty(tx('暂时没有相关的评测记录','No matching evaluation records yet'))}
         ${pageCount>1?`<nav class="lc-pagination" aria-label="${tx('评测记录分页','Evaluation pages')}">
           <button class="btn sm" type="button" data-evaluation-page="prev" ${evaluationPage===0?'disabled':''}>${tx('上一页','Previous')}</button>
           <span role="status" tabindex="-1">${tx(`第 ${evaluationPage+1} / ${pageCount} 页`,`Page ${evaluationPage+1} of ${pageCount}`)}</span>

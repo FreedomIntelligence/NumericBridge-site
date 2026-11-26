@@ -57,19 +57,26 @@
 #v-cases .lc-pagination{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;padding-top:10px;border-top:1px solid var(--hair)}
 #v-cases .lc-pagination [role=status]{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
 #v-cases .lc-count{color:var(--muted);font-size:11px;border:1px solid var(--line);border-radius:100px;padding:1px 7px}
-#v-cases .lc-compact-empty,#v-cases .lc-related .lc-placeholder{padding:10px 12px;font-size:12px;color:var(--muted);margin:0}
 @media(max-width:540px){#v-cases .lc-evaluation-links li{grid-template-columns:minmax(0,1fr)}#v-cases .lc-evaluation-links li>a{grid-column:1;grid-row:auto;justify-self:start}}
 #v-cases .lc-evaluation-links button{text-align:left;justify-self:start}
 #v-cases .lc-evaluation-links span{color:var(--muted);font-size:11px}
 #v-cases .lc-option-grid .lc-choice:focus-visible{outline:2px solid var(--ink);outline-offset:1px}
-#v-cases .lc-results{min-width:0}
+#v-cases .lc-results{min-width:0;display:grid;gap:14px}
+#v-cases .lc-results>section{min-width:0;min-height:0;display:flex;flex-direction:column;margin:0;padding:12px 15px;border:1px solid var(--line);border-radius:8px;background:var(--paper)}
+#v-cases .lc-results>section>h2{flex:none;display:flex;align-items:center;gap:8px;font-size:15px;font-weight:600;letter-spacing:0;margin:0 0 8px}
+#v-cases .lc-results>.lc-recommendation{height:13rem}
+#v-cases .lc-results>.lc-related{height:9rem}
+#v-cases .lc-module-body{position:relative;flex:1;min-height:0;overflow:auto;scrollbar-width:thin}
+#v-cases .lc-module-empty{flex:1;display:grid;place-items:center;text-align:center;margin:0;padding:4px;font-size:13px;color:var(--muted);opacity:.76}
+#v-cases .lc-module-body:has(>.lc-module-empty){display:flex;flex-direction:column}
+#v-cases .lc-related .lc-list{border:none}
+#v-cases .lc-pagination{flex:none;margin-top:auto}
+#v-cases .lc-evaluation-page{min-height:0;overflow:auto;scrollbar-width:thin}
 @media(min-width:761px){
-  #v-cases .lc-results{align-self:stretch;display:flex;flex-direction:column}
-  #v-cases [data-model-records]{flex:1;display:flex;flex-direction:column}
-  #v-cases .lc-evaluation-page.lc-multipage{flex:1;height:0;min-height:8rem}
+  #v-cases .lc-results{align-self:stretch;contain:size;grid-template-rows:minmax(0,29fr) minmax(0,20fr) minmax(0,51fr)}
+  #v-cases .lc-results>.lc-recommendation,#v-cases .lc-results>.lc-related{height:auto}
+  #v-cases .lc-evaluation-page,#v-cases .lc-evaluation-page.lc-multipage{height:auto;flex:1}
 }
-#v-cases .lc-recommendation{padding:20px 22px;border:1px solid var(--line);border-radius:8px;background:var(--paper)}
-#v-cases .lc-recommendation>h2,#v-cases .lc-problems>h2{display:flex;align-items:center;gap:8px;font-size:15px;font-weight:600;letter-spacing:0;margin-bottom:12px}
 #v-cases .lc-recommend-head{display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:4px 12px;margin-bottom:15px}
 #v-cases .lc-recommend-head h3{font-size:25px;font-weight:600;letter-spacing:0;line-height:1.4;overflow-wrap:anywhere}
 #v-cases .lc-recommend-version{color:var(--muted);font:500 16px/1.5 var(--mono)}
@@ -79,7 +86,6 @@
 #v-cases .lc-recommend-config dd{font-size:13px;font-weight:500;overflow-wrap:anywhere}
 #v-cases .lc-version-change{font-size:12px;color:var(--red);margin:-6px 0 20px;overflow-wrap:anywhere}
 #v-cases .lc-detail-link{font-size:11px;color:var(--red)}
-#v-cases .lc-problems{margin-top:22px}
 #v-cases .lc-stack{margin:15px 0 0;font-size:12px;overflow-wrap:anywhere}
 #v-cases .lc-stack h4{font-size:12px;font-weight:600;margin-bottom:8px}
 #v-cases .lc-stack .lc-recommend-config{grid-template-columns:repeat(auto-fit,minmax(min(118px,100%),1fr));gap:8px 14px;border:0;border-radius:6px;background:var(--wash);padding:10px 12px}

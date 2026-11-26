@@ -294,15 +294,27 @@ describe('public cases interactions', { skip: !preview && 'Set NUMERICBRIDGE_PRE
     assert.equal(await issues.locator('.lc-list').isVisible(), false);
     const sidebar = page.locator('.lc-demand');
     const footer = records.locator('.lc-pagination');
+    const recommendation = page.locator('.lc-recommendation');
     const bottom = async locator => { const box = await locator.boundingBox(); return box.y + box.height; };
-    assert.ok(Math.abs(await bottom(footer) - await bottom(sidebar)) <= 1);
+    const aligned = async () => {
+      assert.ok(Math.abs(await bottom(records) - await bottom(sidebar)) <= 1);
+      assert.ok(Math.abs(await bottom(records) - await bottom(footer) - 13) <= 1);
+    };
+    await aligned();
+    for (const [module, label] of [[recommendation, '暂时没有推荐配置'], [issues, '暂时没有相关的问题']]) {
+      const empty = module.locator('.lc-module-empty');
+      assert.equal(await empty.textContent(), label);
+      const bounds = await empty.boundingBox();
+      const body = await module.locator('.lc-module-body').boundingBox();
+      assert.ok(Math.abs((bounds.y + bounds.height/2) - (body.y + body.height/2)) <= 1);
+    }
     const firstPage = await rows.allTextContents();
     const height = (await pane.boundingBox()).height;
     await next.press('Enter');
     assert.ok(await rows.count() <= 8);
     assert.notDeepEqual(await rows.allTextContents(), firstPage);
     assert.equal((await pane.boundingBox()).height, height);
-    assert.ok(Math.abs(await bottom(footer) - await bottom(sidebar)) <= 1);
+    await aligned();
     assert.ok(await prev.isEnabled());
     const secondPage = await rows.allTextContents();
     await rows.first().getByRole('button').press('Enter');
@@ -312,6 +324,9 @@ describe('public cases interactions', { skip: !preview && 'Set NUMERICBRIDGE_PRE
     assert.deepEqual(await rows.allTextContents(), secondPage);
     await prev.press('Enter');
     assert.deepEqual(await rows.allTextContents(), firstPage);
+    await page.setViewportSize({width:1050,height:750});
+    await page.evaluate(() => scrollTo(0,0));
+    await aligned();
     await page.setViewportSize({width:390,height:850});
     assert.ok((await issues.boundingBox()).y < (await records.boundingBox()).y);
     await next.press('Enter');
