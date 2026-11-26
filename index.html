@@ -198,7 +198,7 @@ br.d{display:inline}
 .home-frameworks{margin-top:6px;border-top:1px solid var(--line)}
 .home-frameworks>div{display:grid;grid-template-columns:82px minmax(0,1fr);gap:8px 12px;align-items:baseline;padding:8px 0;border-bottom:1px solid var(--line)}
 .home-frameworks dt{font-size:13px;font-weight:550}
-.home-resources{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(0,1fr);gap:24px;margin:48px 0 44px;padding-top:20px;border-top:1px solid var(--line)}
+.home-resources{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.45fr);gap:24px;margin:48px 0 44px;padding-top:20px;border-top:1px solid var(--line)}
 .home-resources>section{display:flex;flex-direction:column;min-width:0}
 .home-resources .panel{flex:1;min-width:0}
 .home-mcp-panel{display:flex;flex-direction:column;gap:14px;margin-top:14px;padding:16px 18px}
@@ -2561,14 +2561,7 @@ RENDER[""] = function renderHome() {
       <div id="homeCoverageList"></div>
     </section>
     ${homeResultsHtml()}
-    <section class="home-resources" aria-label="${tx("引用与 MCP 接入", "Citation and MCP access")}" data-ol="${tx("引用与 MCP", "Citation & MCP")}">
-      <section class="home-citation" id="homeCitation" aria-labelledby="homeCitationTitle">
-        <h2 class="home-section-title" id="homeCitationTitle">${tx("引用", "Citation")}</h2>
-        <div class="panel cite-code">
-          <div class="cc-top"><div class="seg" role="group" aria-label="${tx("数据引用格式", "Data citation format")}"><button type="button" data-ct="bib">BibTeX</button><button type="button" data-ct="txt">${tx("纯文本", "Plain text")}</button></div><button class="btn sm" type="button" id="citeCopy">${tx("复制", "Copy")}</button></div>
-          <pre id="citePre"></pre>
-        </div>
-      </section>
+    <section class="home-resources" aria-label="${tx("MCP 接入与引用", "MCP access and citation")}" data-ol="${tx("MCP 与引用", "MCP & Citation")}">
       <section id="homeMcp" aria-labelledby="homeMcpTitle">
         <h2 class="home-section-title" id="homeMcpTitle">${tx("MCP 接入", "MCP access")}</h2>
         <div class="panel home-mcp-panel">
@@ -2586,6 +2579,13 @@ RENDER[""] = function renderHome() {
             <p>${tx("本地 stdio · 匿名投稿的 HTTP 接收路径：", "Local stdio · HTTP intake path for anonymous drafts: ")}<code>/v1/public-submissions</code></p>
             <a class="link" href="https://github.com/FreedomIntelligence/NumericBridge/blob/main/community/README.md#configure-agent-contribution">${tx("提交接入指南", "Contribution setup guide")} <span aria-hidden="true">→</span></a>
           </section>
+        </div>
+      </section>
+      <section class="home-citation" id="homeCitation" aria-labelledby="homeCitationTitle">
+        <h2 class="home-section-title" id="homeCitationTitle">${tx("引用", "Citation")}</h2>
+        <div class="panel cite-code">
+          <div class="cc-top"><div class="seg" role="group" aria-label="${tx("数据引用格式", "Data citation format")}"><button type="button" data-ct="bib">BibTeX</button><button type="button" data-ct="txt">${tx("纯文本", "Plain text")}</button></div><button class="btn sm" type="button" id="citeCopy">${tx("复制", "Copy")}</button></div>
+          <pre id="citePre"></pre>
         </div>
       </section>
     </section>
