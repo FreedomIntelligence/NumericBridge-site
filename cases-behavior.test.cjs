@@ -95,7 +95,9 @@ describe('public cases interactions', { skip: !preview && 'Set NUMERICBRIDGE_PRE
   test('native options Escape/close returns focus; choosing a model focuses its live selector', async t => {
     const page = await pageFor(t);
     await visitCases(page, '?' + new URLSearchParams({ ...exampleParams, model: 'gemma4' }));
-    const opener = '[data-pick-model]';
+    const opener = '[data-selector-more="model"]';
+    assert.equal(await page.locator('.lc-recommendation [data-pick-model]').count(), 0);
+    assert.match(await page.locator('.lc-recommendation .lc-module-empty').textContent(), /整个模型系列/);
     await page.locator(opener).press('Enter');
     await focused(page, options + ' [data-options-search]');
     await page.keyboard.press('Escape');

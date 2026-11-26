@@ -883,10 +883,9 @@
           ${recommendation.differences.includes('version')?`<p class="lc-version-change">${version&&version!==requested?`${tx('版本调整','Version change')}: ${esc(requested)} → ${esc(version)}`:tx('已显示其他版本的记录','Showing records for a different version')}</p>`:''}
           <dl class="lc-recommend-config"><div><dt>${icon('chip')}${tx('硬件','Hardware')}</dt><dd title="${esc(config.hardware)}">${esc(state.hardware)}</dd></div><div><dt>${icon('layers')}${tx('实测模型','Tested model')}</dt><dd>${esc(config.model)}</dd></div><div><dt>${icon('target')}${tx('任务','Task')}</dt><dd>${esc(taskLabel(state.task||config.tasks[0]||tx('未记录','Not recorded')))}</dd></div></dl>
           <section class="lc-stack" aria-label="${tx('库版本搭配','Library version combination')}"><h4>${tx('库版本搭配','Library version combination')}</h4><dl class="lc-recommend-config">${config.libraries.map(lib=>`<div><dt>${esc(lib.name)}</dt><dd>${esc(libraryVersion(lib)||'—')}</dd></div>`).join('')}</dl></section>`;
-      })():!ready?moduleEmpty(tx('暂时没有推荐配置','No recommended configuration yet')):
-        lookup.recommendation_gaps.includes('specific-model-required-for-recommendation')?`<button class="btn sm" type="button" data-pick-model>${tx('选择具体型号','Select a specific model')}</button>`:
-        moduleEmpty(tx('暂时没有推荐配置','No recommended configuration yet')))+`</div>`;
-      section.querySelector('[data-pick-model]')?.addEventListener('click',event=>openOptions('model',event.currentTarget));
+      })():moduleEmpty(ready&&lookup.recommendation_gaps.includes('specific-model-required-for-recommendation')?
+        tx('暂时没有适用于整个模型系列的推荐配置','No recommended configuration for the entire model family yet'):
+        tx('暂时没有推荐配置','No recommended configuration yet')))+`</div>`;
       if(!recommendation&&lookup.alternatives.length)section.querySelector('.lc-module-body').insertAdjacentHTML('beforeend',`<button class="btn sm" type="button" data-show-alternatives>${tx('查看其他版本','View other versions')}</button>`);
       section.querySelector('[data-show-alternatives]')?.addEventListener('click',()=>{
         allowAlternatives=true;render();
