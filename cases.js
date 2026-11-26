@@ -317,20 +317,24 @@
     });
     return {label:tx(group.label.zh,group.label.en),columns};
   }
-  async function loadIndex() {
-    if (!loading) loading = Promise.all(['relations','evaluations','repairs','content','frameworks','search-index'].map(async name => {
-      const response = await fetch('./data/'+name+'.json',{cache:'no-cache'});
-      if (!response.ok) throw new Error(name+': HTTP '+response.status);
-      const text=await response.text();return {name,text,document:JSON.parse(text)};
-    })).then(async entries=>{
-      const metadata=entries.at(-1).document;
-      for(const entry of entries.slice(0,-1)){
-        const pin=metadata.sources.find(source=>source.file==='data/'+entry.name+'.json');
-        const hash=Array.from(new Uint8Array(await global.crypto.subtle.digest('SHA-256',new TextEncoder().encode(entry.text)))).map(v=>v.toString(16).padStart(2,'0')).join('');
-        if(!pin||pin.sha256!==hash)throw new Error('Search metadata is stale: '+entry.name);
-      }
-      return buildIndex(...entries.slice(0,3).map(entry=>entry.document),metadata);
-    }).catch(error => {loading=null; throw error;});
+  const indexFiles=['relations','evaluations','repairs','content','frameworks','search-index'];
+  const indexUrl=name=>'./data/'+name+'.json';
+  function loadIndex(renewed=false) {
+    if (!loading) loading = Promise.all(indexFiles.map(async name=>({name,...await global.NumericBridgeCatalog.load(indexUrl(name))})))
+      .then(async entries=>{
+        const metadata=entries.at(-1).document;
+        const pins=new Map(metadata.sources.map(source=>[source.file,source.sha256]));
+        const checked=await Promise.all(entries.slice(0,-1).map(async entry=>{
+          const hash=Array.from(new Uint8Array(await global.crypto.subtle.digest('SHA-256',new TextEncoder().encode(entry.text)))).map(v=>v.toString(16).padStart(2,'0')).join('');
+          return pins.get('data/'+entry.name+'.json')===hash;
+        }));
+        if(checked.some(ok=>!ok)){
+          for(const name of indexFiles)global.NumericBridgeCatalog.forget(indexUrl(name));
+          if(!renewed){loading=null;return loadIndex(true);}
+          throw new Error('Search metadata does not match the current catalog.');
+        }
+        return buildIndex(...entries.slice(0,3).map(entry=>entry.document),metadata);
+      }).catch(error => {loading=null; throw error;});
     return loading;
   }
   async function loadCoverage() {
@@ -360,7 +364,8 @@
     const active=()=>root._lifecycleRequest===stamp&&!root.hidden;
     const mounting=()=>active()&&location.hash===mountHash;
     root._lifecycleCleanup=()=>{root._lifecycleRequest=null;};
-    root.innerHTML=`<div class="wrap lc-loading" role="status">${tx('正在读取案例…','Loading cases…')}</div>`;
+    root.innerHTML=`<div class="wrap lc-page"><header class="lc-intro"><h1 class="work-title"><span class="work-title-mark">${icon('book')}</span><span>${tx('精度案例库','Precision Case Library')}</span></h1><a class="link" href="#/records">${tx('查看全部记录','Browse all records')} →</a></header>
+      <div class="lc-discovery lc-skeleton" aria-busy="true"><div class="lc-demand" aria-hidden="true"><i></i><i></i><i></i></div><div class="lc-problems"><p role="status">${tx('正在准备配置和案例索引…','Preparing configurations and the case index…')}</p><div aria-hidden="true"><i></i><i></i></div></div></div></div>`;
     let index,acknowledgments=[],refreshCredits;
     loadAcknowledgments().then(entries=>{
       if(active()&&Array.isArray(entries)){acknowledgments=entries;refreshCredits?.();}
@@ -387,6 +392,8 @@
     const get=(kind,id)=>index.records.get(key(kind,id));
     const description=(kind,row)=>Search.describe(index,kind,row.id,options.lang||'zh',
       {title:row.details?.title||row.title||row.id});
+    const compareEvaluations=({record:a},{record:b})=>(b.date||'').localeCompare(a.date||'')||a.id.localeCompare(b.id);
+    const evaluationDate=({date})=>date?`<span class="lc-evaluation-date"> · ${tx('实测日期：','Measured on ')}<time datetime="${esc(date)}">${esc(date)}</time></span>`:'';
     const badge=(text,cls='')=>`<span class="lc-badge ${cls}">${esc(text)}</span>`;
     const verificationLabels={
       'scoped-checks-passed':tx('检查通过','Checks passed'),partial:tx('部分检查通过','Some checks passed'),
@@ -800,8 +807,9 @@
       const configurations=shownConfigs.length?`<section class="lc-section lc-configurations"><h3>${tx('测试环境','Test environment')}</h3>${shownConfigs.map(config=>`<div><p>${esc(environmentLabel(config))}</p><ul>${config.libraries.map(lib=>`<li><b>${esc(lib.name)}</b>${libraryVersion(lib)?` <span>${esc(libraryVersion(lib))}</span>`:''}</li>`).join('')}</ul></div>`).join('')}</section>`:'';
       const request=`<dl class="lc-request">${[['hardware',tx('硬件','Hardware')],['model',tx('模型','Model')],['framework',tx('库 / 框架','Library / framework')],['task',tx('任务','Task')]].map(([k,label])=>`<div><dt>${label}</dt><dd>${esc((k==='task'?taskLabel(d.request[k]):d.request[k])??tx('未记录','Not recorded'))}</dd></div>`).join('')}</dl>`;
       const copy=description(focused?'issue':'case',focused?.issue||row);
-      const summaries=!focused&&!solutionRows.length&&!issues.length?[...new Set(c.observations.filter(o=>o.kind==='comparison').map(({record})=>description('comparison',record).summary||record.summary).filter(text=>text&&text!==copy.summary))]:[];
-      const comparisonLinks=!focused?c.observations.filter(o=>o.kind==='comparison').map(({record})=>`<li><a class="link" href="${esc(reportLink(c,'comparison',record.id,reportFilters))}">${esc(description('comparison',record).title)} ↗</a></li>`).join(''):'';
+      const comparisons=focused?[]:c.observations.filter(o=>o.kind==='comparison').sort(compareEvaluations);
+      const summaries=!solutionRows.length&&!issues.length?[...new Set(comparisons.map(({record})=>description('comparison',record).summary||record.summary).filter(text=>text&&text!==copy.summary))]:[];
+      const comparisonLinks=comparisons.map(({record})=>`<li><a class="link" href="${esc(reportLink(c,'comparison',record.id,reportFilters))}">${esc(description('comparison',record).title)} ↗</a>${evaluationDate(record)}</li>`).join('');
       const result=summaries.length||comparisonLinks?`<section class="lc-section"><h3>${tx('评测结果','Evaluation results')}</h3>${summaries.map(text=>`<p>${esc(text)}</p>`).join('')}${comparisonLinks?`<ul class="lc-report-links">${comparisonLinks}</ul>`:''}</section>`:'';
       const issueSection=issues.length?`<section class="lc-section"><h3><span>${tx('问题','Issues')}</span></h3>${issues.map(issue=>{
         const text=description('issue',issue),r=resolutionRows.find(row=>row.issue.id===issue.id);
@@ -890,11 +898,11 @@
           if(config.kind==='comparison'&&configurationMatches(config,state))matches.set(config.recordId,config);
         }
         return [...matches.values()].map(config=>({c,config,record:get('comparison',config.recordId)}));
-      }).sort((a,b)=>String(b.record.date).localeCompare(String(a.record.date))||a.record.id.localeCompare(b.record.id)):[];
+      }).sort(compareEvaluations):[];
       records.hidden=!evaluations.length;
       const evaluationList=items=>items.length?`<ul class="lc-evaluation-links">${items.map(({c,config,record})=>{
         const size=config.searchConfig.model_size;
-        return `<li><button class="link" type="button" data-case="${esc(c.row.id)}" aria-haspopup="dialog">${esc(description('comparison',record).title)}</button><span>${esc(config.model)}${['tiny','unknown'].includes(size)||choiceKey(config.model).includes(choiceKey(size))?'':' · '+esc(display('model_size',size))}</span><a class="link" href="${esc(reportLink(c,'comparison',record.id,state))}">${tx('实测报告','Measured report')} ↗</a></li>`;
+        return `<li><button class="link" type="button" data-case="${esc(c.row.id)}" aria-haspopup="dialog">${esc(description('comparison',record).title)}</button><span>${esc(config.model)}${['tiny','unknown'].includes(size)||choiceKey(config.model).includes(choiceKey(size))?'':' · '+esc(display('model_size',size))}${evaluationDate(record)}</span><a class="link" href="${esc(reportLink(c,'comparison',record.id,state))}">${tx('实测报告','Measured report')} ↗</a></li>`;
       }).join('')}</ul>`:'';
       const tiny=evaluations.filter(({config})=>config.searchConfig.model_size==='tiny');
       records.innerHTML=evaluations.length?`<h2>${tx('评测记录','Evaluations')} · ${evaluations.length}</h2>${evaluationList(evaluations.filter(({config})=>config.searchConfig.model_size!=='tiny'))}${tiny.length?`<details class="lc-option-group" ${tiny.length===evaluations.length?'open':''}><summary>${display('model_size','tiny')} · ${tiny.length}</summary>${evaluationList(tiny)}</details>`:''}`:'';

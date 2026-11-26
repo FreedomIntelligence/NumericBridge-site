@@ -179,7 +179,11 @@
 #v-cases .lc-muted{color:var(--muted)}
 #v-cases .lc-section a{color:var(--red);text-decoration:underline;text-underline-offset:3px;overflow-wrap:anywhere}
 #v-cases .lc-empty{padding:28px 10px;color:var(--muted)}
-#v-cases .lc-loading,#v-cases .lc-error{padding-block:50px;overflow-wrap:anywhere}
+#v-cases .lc-error{padding-block:50px;overflow-wrap:anywhere}
+#v-cases .lc-skeleton p{font-size:13px;color:var(--muted);margin:0 0 12px}
+#v-cases .lc-skeleton i{display:block;background:var(--wash);border:1px solid var(--hair);border-radius:6px;height:30px;margin-block:8px}
+#v-cases .lc-skeleton .lc-problems i{height:42px}
+#v-cases .lc-skeleton i:last-child{width:72%}
 #v-cases .lc-error{color:var(--red)}
 
 @media(min-width:1100px){.nav:has([data-route="cases"]){gap:20px}}

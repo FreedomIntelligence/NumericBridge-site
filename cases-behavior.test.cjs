@@ -48,7 +48,7 @@ function params(page) {
 
 async function visitCases(page, suffix = '') {
   await page.goto(new URL('#/cases' + suffix, preview).href, { waitUntil: 'domcontentloaded' });
-  await page.locator(root + ' .lc-page').waitFor();
+  await page.locator(root + ' .lc-selectors').waitFor();
 }
 
 async function openCase(page) {
@@ -159,6 +159,40 @@ describe('public cases interactions', { skip: !preview && 'Set NUMERICBRIDGE_PRE
     assert.equal(await page.locator(opener).getAttribute('aria-expanded'), 'false');
   });
 
+  test('evaluation history orders measured dates newest first and agrees with the dialog, report and records', async t => {
+    const page = await pageFor(t);
+    await visitCases(page, '?' + new URLSearchParams({ model: 'google/gemma-4-12B' }));
+    const rows = page.locator('[data-model-records] > .lc-evaluation-links > li');
+    await rows.first().waitFor();
+    const history = await rows.evaluateAll(items => items.map(item => {
+      const href = item.querySelector('a').getAttribute('href');
+      const time = item.querySelector('time');
+      return { href, id: new URLSearchParams(href.split('?')[1]).get('comparison'), date: time?.dateTime, text: time?.textContent };
+    }));
+    assert.ok(new Set(history.map(row => row.date)).size > 1, 'fixture has multiple evaluation dates');
+    for (const row of history) {
+      assert.match(row.date, /^\d{4}-\d{2}-\d{2}$/);
+      assert.equal(row.text, row.date);
+    }
+    assert.deepEqual(history, history.slice().sort((a, b) => b.date.localeCompare(a.date) || a.id.localeCompare(b.id)));
+
+    const first = history[0];
+    await rows.first().getByRole('button').press('Enter');
+    await focused(page, '#lc-case-title');
+    const link = page.locator(detail + ' .lc-report-links a[href="' + first.href + '"]');
+    assert.equal(await link.locator('..').locator('time').getAttribute('datetime'), first.date);
+    await link.press('Enter');
+    const reportMeta = page.locator('#v-report .lc-report-head h1 + p');
+    await reportMeta.waitFor();
+    assert.ok((await reportMeta.textContent()).endsWith(first.date));
+
+    const recordQuery = new URLSearchParams({ ev: first.id, group: 'eval', sort: 'date' });
+    await page.goto(new URL('#/list?' + recordQuery, preview).href);
+    const groupMeta = page.locator('#v-list .gsub');
+    await groupMeta.waitFor();
+    assert.ok((await groupMeta.textContent()).includes(first.date));
+  });
+
   test('keyboard alternative-version action leaves focus at the updated recommendation', async t => {
     const page = await pageFor(t);
     await visitCases(page, '?' + new URLSearchParams({ ...exampleParams, version: '0.0.0' }));
@@ -243,7 +277,7 @@ describe('public cases interactions', { skip: !preview && 'Set NUMERICBRIDGE_PRE
     await focused(page, root + ' .lc-intro h1');
   });
 
-  test('default generated markup matches the shipping baseline except heading focusability', { skip: !baseline }, async t => {
+  test('default markup matches the shipping baseline except heading focusability and evaluation dates', { skip: !baseline }, async t => {
     const oldPage = await pageFor(t), newPage = await pageFor(t);
     const oldScript = execFileSync('git', ['show', baseline + ':cases.js'], { cwd: __dirname, encoding: 'utf8' });
     await oldPage.route('**/cases.js*', route => route.fulfill({ contentType: 'text/javascript', body: oldScript }));
@@ -254,6 +288,7 @@ describe('public cases interactions', { skip: !preview && 'Set NUMERICBRIDGE_PRE
         await new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)));
         const copy = document.querySelector('#v-cases').cloneNode(true);
         copy.querySelector('.lc-intro h1').removeAttribute('tabindex');
+        copy.querySelectorAll('[data-model-records] .lc-evaluation-date').forEach(date => date.remove());
         return copy.innerHTML;
       });
     };

@@ -500,13 +500,28 @@
     return { summary: summary, rows: rows, repairs: repairs, upstream: upstreamBoard };
   }
 
+  // The board and case library use the same catalog bytes within a page load.
+  const catalogRequests = new Map();
+  function loadCatalogDocument(url) {
+    if (!catalogRequests.has(url)) {
+      const request = fetch(url, { cache: "no-cache" }).then(async response => {
+        if (!response.ok) throw new Error(url.split("/").at(-1) + ": HTTP " + response.status);
+        const text = await response.text();
+        return { text, document: JSON.parse(text) };
+      }).catch(error => {
+        if (catalogRequests.get(url) === request) catalogRequests.delete(url);
+        throw error;
+      });
+      catalogRequests.set(url, request);
+    }
+    return catalogRequests.get(url);
+  }
+  function forgetCatalogDocument(url) { catalogRequests.delete(url); }
+
   function buildBoard(base) {
     base = base || "./data/";
     var get = function (name) {
-      return fetch(base + name).then(function (r) {
-        if (!r.ok) throw new Error(name + ": HTTP " + r.status);
-        return r.json();
-      });
+      return loadCatalogDocument(base + name).then(entry => entry.document);
     };
     var getOptional = function (name) {
       return fetch(base + name, { cache: "no-cache" }).then(function (r) {
@@ -589,6 +604,7 @@
   }
   const publicPRStatus = { key: publicPRKey, load: loadPublicPRStatus, isStale: publicPRStatusIsStale };
 
+  global.NumericBridgeCatalog = { load: loadCatalogDocument, forget: forgetCatalogDocument };
   global.NumericBridgePublicPRStatus = publicPRStatus;
   global.deriveBoard = deriveBoard;
   global.buildBoard = buildBoard;
