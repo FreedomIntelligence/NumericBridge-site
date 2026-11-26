@@ -291,12 +291,18 @@ describe('public cases interactions', { skip: !preview && 'Set NUMERICBRIDGE_PRE
     assert.equal(await rows.count(), 8);
     assert.ok((await issues.boundingBox()).y < (await records.boundingBox()).y);
     assert.ok(await prev.isDisabled());
+    assert.equal(await issues.locator('.lc-list').isVisible(), false);
+    const sidebar = page.locator('.lc-demand');
+    const footer = records.locator('.lc-pagination');
+    const bottom = async locator => { const box = await locator.boundingBox(); return box.y + box.height; };
+    assert.ok(Math.abs(await bottom(footer) - await bottom(sidebar)) <= 1);
     const firstPage = await rows.allTextContents();
     const height = (await pane.boundingBox()).height;
     await next.press('Enter');
     assert.ok(await rows.count() <= 8);
     assert.notDeepEqual(await rows.allTextContents(), firstPage);
     assert.equal((await pane.boundingBox()).height, height);
+    assert.ok(Math.abs(await bottom(footer) - await bottom(sidebar)) <= 1);
     assert.ok(await prev.isEnabled());
     const secondPage = await rows.allTextContents();
     await rows.first().getByRole('button').press('Enter');

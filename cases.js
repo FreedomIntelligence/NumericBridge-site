@@ -897,7 +897,7 @@
         const note=resolutionNote(resolution);
         const meta=[config.model,...(versions.length?versions:[state.library]),note].filter(Boolean).map(esc).join(' · ');
         return `<button class="lc-problem" type="button" data-case="${esc(c.row.id)}" data-issue="${esc(issue.id)}" aria-haspopup="dialog" aria-expanded="false"><strong>${esc(text.title)}</strong><span class="lc-problem-meta">${meta}</span>${resolutionBadge(resolution)}<span class="lc-row-arrow" title="${tx('查看详情','View details')}">${icon('arrow')}</span></button>`;
-      }).join('')||`<p class="lc-placeholder">${ready?tx('暂无匹配的问题记录','No matching issue records'):tx('指定硬件、模型和框架后查看对应问题。','Select hardware, model and framework to see issues for that configuration.')}</p>`;
+      }).join('');
       const records=root.querySelector('[data-model-records]');
       const evaluations=filterCases(index,state).filter(c=>c.category!=='workflow-benchmark').flatMap(c=>{
         const matches=new Map();

@@ -63,6 +63,11 @@
 #v-cases .lc-evaluation-links span{color:var(--muted);font-size:11px}
 #v-cases .lc-option-grid .lc-choice:focus-visible{outline:2px solid var(--ink);outline-offset:1px}
 #v-cases .lc-results{min-width:0}
+@media(min-width:761px){
+  #v-cases .lc-results{align-self:stretch;display:flex;flex-direction:column}
+  #v-cases [data-model-records]{flex:1;display:flex;flex-direction:column}
+  #v-cases .lc-evaluation-page.lc-multipage{flex:1;height:0;min-height:8rem}
+}
 #v-cases .lc-recommendation{padding:20px 22px;border:1px solid var(--line);border-radius:8px;background:var(--paper)}
 #v-cases .lc-recommendation>h2,#v-cases .lc-problems>h2{display:flex;align-items:center;gap:8px;font-size:15px;font-weight:600;letter-spacing:0;margin-bottom:12px}
 #v-cases .lc-recommend-head{display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:4px 12px;margin-bottom:15px}
@@ -81,6 +86,7 @@
 #v-cases .lc-stack .lc-recommend-config dd{font-family:var(--mono);font-variant-numeric:tabular-nums}
 #v-cases .lc-stack .lc-recommend-config>div:nth-child(2){grid-column:auto;grid-row:auto}
 #v-cases .lc-list{display:grid;border:1px solid var(--line);border-radius:8px;background:var(--paper)}
+#v-cases .lc-related .lc-list:empty{display:none}
 #v-cases .lc-problem{display:grid;grid-template-columns:minmax(0,1fr) max-content 27px;grid-template-areas:'title status action' 'meta status action';align-items:center;gap:3px 12px;text-align:left;padding:12px 14px;border:0;background:transparent;width:100%}
 #v-cases .lc-problem+.lc-problem{border-top:1px solid var(--hair)}
 #v-cases .lc-problem:first-child{border-top-left-radius:7px;border-top-right-radius:7px}
