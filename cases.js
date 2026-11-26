@@ -393,7 +393,6 @@
     const description=(kind,row)=>Search.describe(index,kind,row.id,options.lang||'zh',
       {title:row.details?.title||row.title||row.id});
     const compareEvaluations=({record:a},{record:b})=>(b.date||'').localeCompare(a.date||'')||a.id.localeCompare(b.id);
-    const evaluationDate=({date})=>date?`<span class="lc-evaluation-date"> · ${tx('实测日期：','Measured on ')}<time datetime="${esc(date)}">${esc(date)}</time></span>`:'';
     const badge=(text,cls='')=>`<span class="lc-badge ${cls}">${esc(text)}</span>`;
     const verificationLabels={
       'scoped-checks-passed':tx('检查通过','Checks passed'),partial:tx('部分检查通过','Some checks passed'),
@@ -809,7 +808,7 @@
       const copy=description(focused?'issue':'case',focused?.issue||row);
       const comparisons=focused?[]:c.observations.filter(o=>o.kind==='comparison').sort(compareEvaluations);
       const summaries=!solutionRows.length&&!issues.length?[...new Set(comparisons.map(({record})=>description('comparison',record).summary||record.summary).filter(text=>text&&text!==copy.summary))]:[];
-      const comparisonLinks=comparisons.map(({record})=>`<li><a class="link" href="${esc(reportLink(c,'comparison',record.id,reportFilters))}">${esc(description('comparison',record).title)} ↗</a>${evaluationDate(record)}</li>`).join('');
+      const comparisonLinks=comparisons.map(({record})=>`<li><a class="link" href="${esc(reportLink(c,'comparison',record.id,reportFilters))}">${esc(description('comparison',record).title)} ↗</a></li>`).join('');
       const result=summaries.length||comparisonLinks?`<section class="lc-section"><h3>${tx('评测结果','Evaluation results')}</h3>${summaries.map(text=>`<p>${esc(text)}</p>`).join('')}${comparisonLinks?`<ul class="lc-report-links">${comparisonLinks}</ul>`:''}</section>`:'';
       const issueSection=issues.length?`<section class="lc-section"><h3><span>${tx('问题','Issues')}</span></h3>${issues.map(issue=>{
         const text=description('issue',issue),r=resolutionRows.find(row=>row.issue.id===issue.id);
@@ -902,7 +901,7 @@
       records.hidden=!evaluations.length;
       const evaluationList=items=>items.length?`<ul class="lc-evaluation-links">${items.map(({c,config,record})=>{
         const size=config.searchConfig.model_size;
-        return `<li><button class="link" type="button" data-case="${esc(c.row.id)}" aria-haspopup="dialog">${esc(description('comparison',record).title)}</button><span>${esc(config.model)}${['tiny','unknown'].includes(size)||choiceKey(config.model).includes(choiceKey(size))?'':' · '+esc(display('model_size',size))}${evaluationDate(record)}</span><a class="link" href="${esc(reportLink(c,'comparison',record.id,state))}">${tx('实测报告','Measured report')} ↗</a></li>`;
+        return `<li><button class="link" type="button" data-case="${esc(c.row.id)}" aria-haspopup="dialog">${esc(description('comparison',record).title)}</button><span>${esc(config.model)}${['tiny','unknown'].includes(size)||choiceKey(config.model).includes(choiceKey(size))?'':' · '+esc(display('model_size',size))}</span><a class="link" href="${esc(reportLink(c,'comparison',record.id,state))}">${tx('实测报告','Measured report')} ↗</a></li>`;
       }).join('')}</ul>`:'';
       const tiny=evaluations.filter(({config})=>config.searchConfig.model_size==='tiny');
       records.innerHTML=evaluations.length?`<h2>${tx('评测记录','Evaluations')} · ${evaluations.length}</h2>${evaluationList(evaluations.filter(({config})=>config.searchConfig.model_size!=='tiny'))}${tiny.length?`<details class="lc-option-group" ${tiny.length===evaluations.length?'open':''}><summary>${display('model_size','tiny')} · ${tiny.length}</summary>${evaluationList(tiny)}</details>`:''}`:'';

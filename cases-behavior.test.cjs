@@ -159,28 +159,28 @@ describe('public cases interactions', { skip: !preview && 'Set NUMERICBRIDGE_PRE
     assert.equal(await page.locator(opener).getAttribute('aria-expanded'), 'false');
   });
 
-  test('evaluation history orders measured dates newest first and agrees with the dialog, report and records', async t => {
+  test('evaluation history stays newest first without displaying dates in the case lists', async t => {
     const page = await pageFor(t);
     await visitCases(page, '?' + new URLSearchParams({ model: 'google/gemma-4-12B' }));
     const rows = page.locator('[data-model-records] > .lc-evaluation-links > li');
     await rows.first().waitFor();
-    const history = await rows.evaluateAll(items => items.map(item => {
-      const href = item.querySelector('a').getAttribute('href');
-      const time = item.querySelector('time');
-      return { href, id: new URLSearchParams(href.split('?')[1]).get('comparison'), date: time?.dateTime, text: time?.textContent };
-    }));
+    const evaluations = await page.evaluate(async () => (await window.NumericBridgeCatalog.load('./data/evaluations.json')).document.evaluations);
+    const dates = new Map(evaluations.map(row => [row.id, row.date]));
+    const links = await rows.evaluateAll(items => items.map(item => item.querySelector('a').getAttribute('href')));
+    const history = links.map(href => {
+      const id = new URLSearchParams(href.split('?')[1]).get('comparison');
+      return { href, id, date: dates.get(id) };
+    });
     assert.ok(new Set(history.map(row => row.date)).size > 1, 'fixture has multiple evaluation dates');
-    for (const row of history) {
-      assert.match(row.date, /^\d{4}-\d{2}-\d{2}$/);
-      assert.equal(row.text, row.date);
-    }
+    assert.equal(await rows.locator('time').count(), 0);
+    for (const row of history) assert.match(row.date, /^\d{4}-\d{2}-\d{2}$/);
     assert.deepEqual(history, history.slice().sort((a, b) => b.date.localeCompare(a.date) || a.id.localeCompare(b.id)));
 
     const first = history[0];
     await rows.first().getByRole('button').press('Enter');
     await focused(page, '#lc-case-title');
     const link = page.locator(detail + ' .lc-report-links a[href="' + first.href + '"]');
-    assert.equal(await link.locator('..').locator('time').getAttribute('datetime'), first.date);
+    assert.equal(await link.locator('..').locator('time').count(), 0);
     await link.press('Enter');
     const reportMeta = page.locator('#v-report .lc-report-head h1 + p');
     await reportMeta.waitFor();
@@ -277,7 +277,7 @@ describe('public cases interactions', { skip: !preview && 'Set NUMERICBRIDGE_PRE
     await focused(page, root + ' .lc-intro h1');
   });
 
-  test('default markup matches the shipping baseline except heading focusability and evaluation dates', { skip: !baseline }, async t => {
+  test('default markup matches the shipping baseline except heading focusability', { skip: !baseline }, async t => {
     const oldPage = await pageFor(t), newPage = await pageFor(t);
     const oldScript = execFileSync('git', ['show', baseline + ':cases.js'], { cwd: __dirname, encoding: 'utf8' });
     await oldPage.route('**/cases.js*', route => route.fulfill({ contentType: 'text/javascript', body: oldScript }));
@@ -288,7 +288,6 @@ describe('public cases interactions', { skip: !preview && 'Set NUMERICBRIDGE_PRE
         await new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)));
         const copy = document.querySelector('#v-cases').cloneNode(true);
         copy.querySelector('.lc-intro h1').removeAttribute('tabindex');
-        copy.querySelectorAll('[data-model-records] .lc-evaluation-date').forEach(date => date.remove());
         return copy.innerHTML;
       });
     };
