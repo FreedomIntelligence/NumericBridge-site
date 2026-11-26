@@ -198,7 +198,15 @@ br.d{display:inline}
 .home-frameworks{margin-top:6px;border-top:1px solid var(--line)}
 .home-frameworks>div{display:grid;grid-template-columns:82px minmax(0,1fr);gap:8px 12px;align-items:baseline;padding:8px 0;border-bottom:1px solid var(--line)}
 .home-frameworks dt{font-size:13px;font-weight:550}
-.home-citation{margin:48px 0 44px;padding-top:20px;border-top:1px solid var(--line)}
+.home-resources{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(0,1fr);gap:24px;margin:48px 0 44px;padding-top:20px;border-top:1px solid var(--line)}
+.home-resources>section{display:flex;flex-direction:column;min-width:0}
+.home-resources .panel{flex:1;min-width:0}
+.home-mcp-panel{display:flex;flex-direction:column;gap:14px;margin-top:14px;padding:16px 18px}
+.home-mcp-panel p{color:var(--muted);font-size:13px;line-height:1.65}
+.home-mcp-address{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 10px;background:var(--wash);border:1px solid var(--line);border-radius:6px}
+.home-mcp-address code{flex:1 1 190px;min-width:0;font:12px/1.5 var(--mono);overflow-wrap:anywhere}
+.home-mcp-panel>.link{align-self:flex-start;margin-top:auto}
+@media(max-width:800px){.home-resources{grid-template-columns:minmax(0,1fr)}}
 .home-coverage-status{margin-top:4px;color:var(--muted);font-size:13px}
 .home-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:18px 24px}
 .home-stat{display:flex;flex-direction:column;align-items:flex-start;min-width:0;border-top:1px solid var(--line);padding-top:12px}
@@ -218,7 +226,7 @@ br.d{display:inline}
   .home-affiliations{margin-top:16px;gap:5px 14px;font-size:13px}
   .home-coverage,.home-results{margin-top:34px}
   .home-section-title{font-size:26px}
-  .home-citation{margin:34px 0 34px}
+  .home-resources{margin:34px 0}
   .home-frameworks>div{grid-template-columns:1fr}
   .home-stats{column-gap:14px}
   .home-stat .home-stat-value{font-size:30px}
@@ -2213,7 +2221,8 @@ function route() {
     h.q.set("section", "citation");
   }
   const name = Object.hasOwn(VIEWS, h.name) ? h.name : "";
-  const citeJump = name === "" && h.q.get("section") === "citation";
+  const homeSection = name === "" ? h.q.get("section") : null;
+  const homeJump = homeSection === "citation" ? "homeCitation" : homeSection === "mcp" ? "homeMcp" : null;
   const closedDetail = isOpen();
   const drawerReturn = closedDetail && dwEntry?.parent === location.hash ? drawerFocusState() : null;
   if (closedDetail) closeDrawer(true);
@@ -2232,12 +2241,13 @@ function route() {
   byId("csv").hidden = !(name === "list" || name === "repairs");
   const key = name + "/" + (h.arg || "");
   RENDER[name](h);
-  if (citeJump) byId("homeCitation").scrollIntoView({ block: "start", behavior: "instant" });
+  const jumpTarget = homeJump ? byId(homeJump) : null;
+  if (jumpTarget) jumpTarget.scrollIntoView({ block: "start", behavior: "instant" });
   else if (key !== lastView) window.scrollTo({ top: 0, behavior: "instant" });
-  if (lastView !== null && (key !== lastView || citeJump || closedDetail) && !isOpen() && !document.querySelector("dialog[open]")) {
+  if (lastView !== null && (key !== lastView || jumpTarget || closedDetail) && !isOpen() && !document.querySelector("dialog[open]")) {
     const view = byId(VIEWS[name]);
     if (!drawerReturn || !restoreDrawerFocus(drawerReturn)) {
-      focusAt((citeJump ? $("#homeCitation h2") || byId("homeCitation") : $("h1", view)) || byId("main"));
+      focusAt((jumpTarget ? $("h2", jumpTarget) || jumpTarget : $("h1", view)) || byId("main"));
     }
   }
   lastView = key;
@@ -2522,6 +2532,7 @@ function homeResultsHtml() {
       <dd class="home-stat-value${value == null ? " pending" : ""}">${esc(value ?? tx("暂无已核实记录", "No verified records"))}</dd>
       ${note ? `<dd class="home-stat-note">${esc(note)}</dd>` : ""}</div>`).join("")}</dl></section>`;
 }
+const MCP_ENDPOINT = "https://numericbridge.com/mcp";
 RENDER[""] = function renderHome() {
   const view = byId("v-home");
   if (view.firstElementChild) return;
@@ -2545,17 +2556,29 @@ RENDER[""] = function renderHome() {
       <div id="homeCoverageList"></div>
     </section>
     ${homeResultsHtml()}
-    <section class="home-citation" id="homeCitation" aria-labelledby="homeCitationTitle" data-ol="${tx("引用", "Citation")}">
-      <h2 class="home-section-title" id="homeCitationTitle">${tx("引用", "Citation")}</h2>
-      <div class="panel cite-code">
-        <div class="cc-top"><div class="seg" role="group" aria-label="${tx("数据引用格式", "Data citation format")}"><button type="button" data-ct="bib">BibTeX</button><button type="button" data-ct="txt">${tx("纯文本", "Plain text")}</button></div><button class="btn sm" type="button" id="citeCopy">${tx("复制", "Copy")}</button></div>
-        <pre id="citePre"></pre>
-      </div>
+    <section class="home-resources" aria-label="${tx("引用与 MCP 接入", "Citation and MCP access")}" data-ol="${tx("引用与 MCP", "Citation & MCP")}">
+      <section class="home-citation" id="homeCitation" aria-labelledby="homeCitationTitle">
+        <h2 class="home-section-title" id="homeCitationTitle">${tx("引用", "Citation")}</h2>
+        <div class="panel cite-code">
+          <div class="cc-top"><div class="seg" role="group" aria-label="${tx("数据引用格式", "Data citation format")}"><button type="button" data-ct="bib">BibTeX</button><button type="button" data-ct="txt">${tx("纯文本", "Plain text")}</button></div><button class="btn sm" type="button" id="citeCopy">${tx("复制", "Copy")}</button></div>
+          <pre id="citePre"></pre>
+        </div>
+      </section>
+      <section id="homeMcp" aria-labelledby="homeMcpTitle">
+        <h2 class="home-section-title" id="homeMcpTitle">${tx("MCP 接入", "MCP access")}</h2>
+        <div class="panel home-mcp-panel">
+          <p>${tx("在支持 MCP 的客户端中检索公开精度案例、评测结果和修复证据。", "Search public precision cases, evaluation results, and repair evidence from an MCP client.")}</p>
+          <div class="home-mcp-address"><code dir="ltr">${esc(MCP_ENDPOINT)}</code><button id="homeMcpCopy" class="btn sm" type="button" aria-label="${tx("复制 MCP 地址", "Copy MCP endpoint URL")}">${tx("复制地址", "Copy URL")}</button></div>
+          <p>${tx("Streamable HTTP · 只读 · 无需令牌", "Streamable HTTP · Read-only · No token required")}</p>
+          <a class="link" href="https://github.com/FreedomIntelligence/NumericBridge/blob/main/community/README.md#mcp-search">${tx("查看接入指南", "View setup guide")} <span aria-hidden="true">→</span></a>
+        </div>
+      </section>
     </section>
   </div>`;
   sceneFlow();
   renderHomeCoverage(byId("homeCoverageList"));
   renderCite();
+  byId("homeMcpCopy").onclick = e => copyText(MCP_ENDPOINT, e.currentTarget);
 };
 const SW = { kind: "", task: "" };
 const HERO_BAR_LABELS = {
