@@ -32,6 +32,14 @@ latter uses the receipt-scoped bearer token. The downloaded private receipt JSON
 contains the token; keep it private and do not commit or share it. The page does
 not persist the token. A receipt means queued for review, not published.
 
-Run the focused frontend tests with `node --test *.test.cjs`.
+Run the frontend tests with `node --test *.test.cjs`.
+
+To include Chrome interaction regressions, set `NUMERICBRIDGE_PREVIEW_URL`
+to the origin of a loopback preview serving the published data and rerun the
+same command. These suites use Playwright and restrict their requests to
+the local preview; submission writes are mocked. Optionally set
+`NUMERICBRIDGE_PLAYWRIGHT_MODULE` to an installed Playwright module path,
+`NUMERICBRIDGE_CHROME` to a Chrome executable, and `CASES_BASELINE_REF` to
+include the cases DOM comparison against an earlier revision.
 
 Public assets retain the attribution notices in [assets](assets/README.md).

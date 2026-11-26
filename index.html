@@ -1494,21 +1494,21 @@ button.pcard:hover{border-color:var(--ink);transform:translateY(-1px)}
 </div></footer>
 
 <div class="scrim" id="scrim"></div>
-<aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="dwTitle" aria-hidden="true">
+<aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="dwTitle" aria-hidden="true" inert>
   <div class="dw-top">
     <span class="mono-note" id="dwCrumb"></span>
     <button class="iconbtn" id="dwPrev" title="上一条（k）" aria-label="上一条">↑</button>
     <button class="iconbtn" id="dwNext" title="下一条（j）" aria-label="下一条">↓</button>
     <button class="iconbtn" id="dwClose" title="关闭（Esc）" aria-label="关闭">×</button>
   </div>
-  <div class="dw-body" id="dwBody"></div>
+  <div class="dw-body" id="dwBody" tabindex="0" role="region" aria-labelledby="dwTitle"></div>
   <div class="dw-foot" id="dwFoot"></div>
 </aside>
 <div class="tip" id="tip" role="tooltip"></div>
 
 <script src="./board-data.js?v=public-pr-status-v4"></script>
 <script src="./search.js?v=framework-scope-20261118"></script>
-<script src="./cases.js?v=community-acknowledgments"></script>
+<script src="./cases.js?v=interaction-20261126"></script>
 <script>
 "use strict";
 function start(DATA) {
@@ -1547,7 +1547,27 @@ const pct = r => r == null ? "—" : `${Math.round(r * 100)}%`;
 const median = a => { if (!a.length) return null; const s = [...a].sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
 const plural = (n, w) => `${fmtInt(n)} ${w}`;
 const hashStr = t => { let h = 5381; for (let i = 0; i < t.length; i++) h = ((h << 5) + h + t.charCodeAt(i)) | 0; return Math.abs(h); };
-const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
+// A delayed or composing query must not mutate a different history entry.
+function bindRecordSearch(input, name, update) {
+  let timer;
+  function commit(revision, query) {
+    if (revision === routeRevision && input.value === query && parseHash().name === name) update(query);
+  }
+  const schedule = e => {
+    clearTimeout(timer);
+    if (e.isComposing) return;
+    const revision = routeRevision, query = input.value;
+    timer = setTimeout(() => commit(revision, query), 120);
+  };
+  input.addEventListener("compositionstart", () => clearTimeout(timer));
+  input.addEventListener("input", schedule);
+  input.addEventListener("compositionend", schedule);
+  input.addEventListener("keydown", e => {
+    if (e.key !== "Enter" || e.isComposing || e.keyCode === 229) return;
+    clearTimeout(timer);
+    commit(routeRevision, input.value);
+  });
+}
 
 let LANG = (() => { try { const q = new URLSearchParams(location.search).get("lang") || localStorage.getItem("nb-lang"); return q === "en" ? "en" : "zh"; } catch (e) { return "zh"; } })();
 const tx = (zh, en) => LANG === "en" ? en : zh;
@@ -1872,7 +1892,9 @@ function tierLegend() {
 
 /* ---------- tooltip ---------- */
 const TIP = byId("tip");
+let termEl = null, termPinned = false;
 function showTip(html, x, y) {
+  if (termEl) hideTip();
   TIP.innerHTML = html; TIP.classList.add("on");
   const w = TIP.offsetWidth, h = TIP.offsetHeight;
   let left = x + 14, top = y + 14;
@@ -1880,7 +1902,11 @@ function showTip(html, x, y) {
   if (top + h > innerHeight - 8) top = y - h - 14;
   TIP.style.left = Math.max(8, left) + "px"; TIP.style.top = Math.max(8, top) + "px";
 }
-const hideTip = () => TIP.classList.remove("on");
+function hideTip() {
+  termEl?.removeAttribute("aria-describedby");
+  termEl = null; termPinned = false;
+  TIP.classList.remove("on");
+}
 function rowTip(r, key) {
   const m = key ? r.metrics[key] : r.head, P = r.pairUI, evName = EVALS.get(r.eval_id)?.ui.full || r.eval_title;
   const k = key || r.head?.key;
@@ -1892,50 +1918,139 @@ function rowTip(r, key) {
 /* ---------- drawer ---------- */
 const DW = { kind: null, order: [], idx: -1, onMove: null };
 const drawer = byId("drawer"), scrim = byId("scrim");
-let dwReturnFocus = null;
-function openDrawer(kind, id, order, onMove) {
+const drawerBackground = [$(".site"), byId("main"), byId("outline"), $(".foot")];
+const tabControls = 'a[href], button, input, select, textarea, summary, [tabindex], [contenteditable="true"]';
+let dwReturnFocus = null, dwOpeningId = null, dwEntry = null, dwClosing = false;
+// Only entries opened by this document can dismiss with history.back(). A shared
+// URL or reload is safe to close even when it was opened in a new tab.
+const drawerDocument = String(performance.timeOrigin);
+let drawerSequence = 0;
+function drawerEntry() {
+  const entry = history.state?.nbDrawer;
+  return entry?.owner === drawerDocument ? entry : null;
+}
+function acceptsFocus(el) {
+  return el instanceof HTMLElement && el.isConnected && !el.matches(":disabled") && !el.closest("[hidden], [inert]") && el.getClientRects().length && getComputedStyle(el).visibility === "visible";
+}
+function focusAt(el) {
+  if (!acceptsFocus(el)) return false;
+  if (!el.matches(tabControls)) el.setAttribute("tabindex", "-1");
+  el.focus({ preventScroll: true });
+  return document.activeElement === el;
+}
+function openDrawer(kind, id, order, onMove, trigger) {
   const ids = order && order.length ? order : [id];
+  if (!isOpen()) {
+    const active = trigger || document.activeElement;
+    dwReturnFocus = active instanceof HTMLElement && active.matches(tabControls) && !drawer.contains(active) ? active : null;
+    dwEntry = drawerEntry();
+    if (trigger && onMove) {
+      const state = { owner: drawerDocument, token: ++drawerSequence, parent: location.hash, id };
+      history.pushState({ ...history.state, nbDrawer: state }, "", location.href);
+      dwEntry = state;
+    }
+    dwOpeningId = dwEntry?.id || id;
+    dwClosing = false;
+  }
   DW.kind = kind; DW.order = ids; DW.idx = Math.max(0, ids.indexOf(id)); DW.onMove = onMove || null;
-  if (!drawer.classList.contains("on")) dwReturnFocus = document.activeElement;
-  // mark open first: paintDrawer's onMove writes the id into the URL only while open
+  // Mark open before rendering so onMove can serialize the current record.
+  drawer.inert = false;
   drawer.classList.add("on"); scrim.classList.add("on"); drawer.setAttribute("aria-hidden", "false");
   paintDrawer();
+  hideTip();
   document.body.classList.add("locked");
-  setTimeout(() => byId("dwClose").focus({ preventScroll: true }), 30);
+  focusAt(byId("dwClose"));
+  for (const el of drawerBackground) el.inert = true;
 }
 function paintDrawer() {
-  const id = DW.order[DW.idx];
+  const id = DW.order[DW.idx], focus = document.activeElement;
   if (DW.kind === "row") paintRow(BYID.get(id));
   else if (DW.kind === "upstream") paintUpstreamDrawer(UPBY.get(id));
   else paintRepair(REPBY.get(id));
-  byId("dwPrev").disabled = DW.idx <= 0; byId("dwNext").disabled = DW.idx >= DW.order.length - 1;
-  byId("dwPrev").style.opacity = DW.idx <= 0 ? .35 : 1; byId("dwNext").style.opacity = DW.idx >= DW.order.length - 1 ? .35 : 1;
+  for (const [key, disabled] of [["dwPrev", DW.idx <= 0], ["dwNext", DW.idx >= DW.order.length - 1]]) {
+    const button = byId(key);
+    if (disabled && focus === button) focusAt(byId("dwClose"));
+    button.disabled = disabled;
+    button.style.opacity = disabled ? .35 : 1;
+  }
+  if (focus && !focus.isConnected) focusAt(byId("dwClose"));
   byId("dwBody").scrollTop = 0;
-  DW.onMove && DW.onMove(id);
+  DW.onMove?.(id);
 }
 function moveDrawer(step) {
   const n = DW.idx + step;
   if (n < 0 || n >= DW.order.length) return;
+  hideTip();
   DW.idx = n; paintDrawer();
 }
+function drawerFocusState() {
+  return { trigger: dwReturnFocus, opening: dwOpeningId, kind: DW.kind, current: DW.order[DW.idx] };
+}
+function restoreDrawerFocus({ trigger, opening, kind, current }) {
+  const view = $("#main .view:not([hidden])");
+  const attr = kind === "upstream" ? "data-up-id" : kind === "repair" ? "data-rp" : "data-id";
+  const match = id => id && view?.querySelector('[' + attr + '="' + CSS.escape(id) + '"]');
+  return focusAt(trigger) || focusAt(match(opening)) || focusAt(match(current)) || focusAt(view?.querySelector("h1") || byId("main"));
+}
 function closeDrawer(silent) {
-  if (!drawer.classList.contains("on")) return;
-  drawer.classList.remove("on"); scrim.classList.remove("on"); drawer.setAttribute("aria-hidden", "true");
+  if (!isOpen()) return;
+  // Forward can reopen this entry, but a direct deep link has no known parent.
+  if (!silent && dwEntry && drawerEntry()?.token === dwEntry.token && location.hash !== dwEntry.parent) {
+    if (!dwClosing) { dwClosing = true; history.back(); }
+    return;
+  }
+  const returnTo = drawerFocusState(), onMove = DW.onMove;
+  hideTip();
+  for (const el of drawerBackground) el.inert = false;
+  drawer.classList.remove("on"); scrim.classList.remove("on");
   document.body.classList.remove("locked");
-  const cb = DW.onMove; DW.kind = null; DW.onMove = null;
-  if (!silent && cb) cb(null);
-  if (!silent && dwReturnFocus && document.contains(dwReturnFocus)) dwReturnFocus.focus({ preventScroll: true });
+  dwReturnFocus = dwOpeningId = dwEntry = null;
+  dwClosing = false;
+  DW.kind = DW.onMove = null;
+  if (!silent) { onMove?.(null); restoreDrawerFocus(returnTo); }
+  if (drawer.contains(document.activeElement)) document.activeElement.blur();
+  drawer.inert = true;
+  drawer.setAttribute("aria-hidden", "true");
 }
 byId("dwPrev").onclick = () => moveDrawer(-1);
 byId("dwNext").onclick = () => moveDrawer(1);
 byId("dwClose").onclick = () => closeDrawer();
 scrim.onclick = () => closeDrawer();
 const isOpen = () => drawer.classList.contains("on");
+function trapDrawerTab(e) {
+  const items = $$(tabControls, drawer).filter(el => el.tabIndex >= 0 && acceptsFocus(el));
+  const first = items[0], last = items.at(-1), current = document.activeElement;
+  if (!first) { e.preventDefault(); return; }
+  if (!items.includes(current) || current === (e.shiftKey ? first : last)) {
+    e.preventDefault(); focusAt(e.shiftKey ? last : first);
+  }
+}
 
-function copyText(t, btn) {
-  const done = ok => { if (!btn) return; const o = btn.innerHTML; btn.innerHTML = ok ? tx("已复制 ✓", "Copied ✓") : tx("复制失败", "Copy failed"); setTimeout(() => { btn.innerHTML = o; }, 1400); };
-  if (navigator.clipboard?.writeText) navigator.clipboard.writeText(t).then(() => done(true), () => done(false));
-  else done(false);
+const copyStates = new WeakMap();
+let copyStatus;
+async function copyText(text, button) {
+  const state = button ? copyStates.get(button) || { original: button.innerHTML, attempt: 0, timer: null } : null;
+  if (state) copyStates.set(button, state);
+  const attempt = state ? ++state.attempt : 0;
+  const activeRoute = location.hash;
+  let ok = false;
+  try {
+    if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); ok = true; }
+  } catch { /* Existing failure feedback below. */ }
+  if (!state || attempt !== state.attempt || !button.isConnected || button.closest("[hidden], [inert]")) return;
+  if (location.hash !== activeRoute && button.closest("#drawer")) return;
+  clearTimeout(state.timer);
+  const message = ok ? tx("已复制 ✓", "Copied ✓") : tx("复制失败", "Copy failed");
+  button.textContent = message;
+  if (!copyStatus) {
+    copyStatus = document.createElement("span"); copyStatus.className = "sr";
+    copyStatus.setAttribute("role", "status"); copyStatus.setAttribute("aria-atomic", "true");
+  }
+  const container = button.closest("[role=dialog],dialog") || byId("main");
+  if (copyStatus.parentNode !== container) container.prepend(copyStatus);
+  copyStatus.textContent = "";
+  requestAnimationFrame(() => { if (state.attempt === attempt && button.isConnected && !button.closest("[hidden],[inert]")) copyStatus.textContent = message; });
+  state.timer = setTimeout(() => { button.innerHTML = state.original; }, 1400);
 }
 const pageUrl = hash => location.href.split("#")[0] + hash;
 
@@ -2061,9 +2176,12 @@ function paintRow(r) {
 /* ---------- router ---------- */
 function parseHash() {
   const raw = (location.hash || "#/").replace(/^#\/?/, "");
-  const [path, qs] = raw.split("?");
-  const parts = path.split("/");
-  return { name: parts[0] || "", arg: parts[1] ? decodeURIComponent(parts[1]) : null, q: new URLSearchParams(qs || "") };
+  const qAt = raw.indexOf("?");
+  const path = qAt < 0 ? raw : raw.slice(0, qAt);
+  const [name, encoded] = path.split("/");
+  let arg = encoded || null;
+  if (encoded) try { arg = decodeURIComponent(encoded); } catch { /* A malformed fragment should not strand the page. */ }
+  return { name: name || "", arg, q: new URLSearchParams(qAt < 0 ? "" : raw.slice(qAt + 1)) };
 }
 /* Query changes made by a view are written with replaceState, which does not
    fire hashchange, so a filter tweak never re-runs the router. */
@@ -2071,7 +2189,7 @@ function writeQuery(name, params) {
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) if (v !== "" && v != null && v !== false) qs.set(k, v);
   const s = qs.toString().replace(/%2C/g, ",").replace(/%7C/g, "|");
-  history.replaceState(null, "", `#/${name}${s ? "?" + s : ""}`);
+  history.replaceState(history.state, "", `#/${name}${s ? "?" + s : ""}`);
 }
 const VIEWS = { "": "v-home", overview: "v-overview", list: "v-list", records: "v-records", compare: "v-compare", upstream: "v-upstream", platform: "v-platform", repairs: "v-repairs", cases: "v-cases", report: "v-report", how: "v-how", acknowledgments: "v-acknowledgments" };
 const RENDER = {};
@@ -2091,27 +2209,43 @@ RENDER.records = () => {
       <a class="btn sm" href="./data/${file}.json" download aria-label="${tx(`下载${label} JSON`, `Download ${label.toLowerCase()} JSON`)}">JSON <span aria-hidden="true">↓</span></a>
     </section>`).join("")}</div></div>`;
 };
-let lastView = null;
+let lastView = null, routeRevision = 0;
 function route() {
+  routeRevision++;
   const h = parseHash();
   if (h.name === "cite") {
     writeQuery("", { section: "citation" });
     h.name = "";
     h.q.set("section", "citation");
   }
-  const name = VIEWS[h.name] ? h.name : "";
+  const name = Object.hasOwn(VIEWS, h.name) ? h.name : "";
   const citeJump = name === "" && h.q.get("section") === "citation";
-  if (isOpen()) closeDrawer(true);
+  const closedDetail = isOpen();
+  const drawerReturn = closedDetail && dwEntry?.parent === location.hash ? drawerFocusState() : null;
+  if (closedDetail) closeDrawer(true);
   byId("v-cases")._lifecycleCleanup?.();
   hideTip();
   for (const [k, id] of Object.entries(VIEWS)) byId(id).hidden = k !== name;
   const navKey = name === "platform" ? "compare" : name === "report" ? "cases" : name;
-  $$("#nav a").forEach(a => a.dataset.route === navKey ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"));
+  const nav = byId("nav");
+  $$("a", nav).forEach(a => a.dataset.route === navKey ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"));
+  const active = $('[aria-current="page"]', nav);
+  if (lastView !== null && active && nav.scrollWidth > nav.clientWidth + 1) {
+    const rail = nav.getBoundingClientRect(), item = active.getBoundingClientRect();
+    const delta = (item.left < rail.left) ? item.left - rail.left : (item.right > rail.right) ? item.right - rail.right : 0;
+    if (delta) nav.scrollBy({ left: delta, behavior: "instant" });
+  }
   byId("csv").hidden = !(name === "list" || name === "repairs");
   const key = name + "/" + (h.arg || "");
   RENDER[name](h);
   if (citeJump) byId("homeCitation").scrollIntoView({ block: "start", behavior: "instant" });
-  else if (key !== lastView) window.scrollTo({ top: 0, behavior: "instant" in window ? "instant" : "auto" });
+  else if (key !== lastView) window.scrollTo({ top: 0, behavior: "instant" });
+  if (lastView !== null && (key !== lastView || citeJump || closedDetail) && !isOpen() && !document.querySelector("dialog[open]")) {
+    const view = byId(VIEWS[name]);
+    if (!drawerReturn || !restoreDrawerFocus(drawerReturn)) {
+      focusAt((citeJump ? $("#homeCitation h2") || byId("homeCitation") : $("h1", view)) || byId("main"));
+    }
+  }
   lastView = key;
   setupOutline(byId(VIEWS[name]));
   syncOutline();
@@ -2132,7 +2266,9 @@ function setupOutline(view) {
   OL_LINKS = $$("a", ol);
   OL_LINKS.forEach((a, i) => a.onclick = e => {
     e.preventDefault();
-    OL_SECS[i].scrollIntoView({ behavior: "instant", block: "start" });
+    const section = OL_SECS[i];
+    section.scrollIntoView({ behavior: "instant", block: "start" });
+    if (!e.detail) focusAt($("h1, h2, h3", section) || section);
     OL_JUMP = { index: i, top: scrollY };
     syncOutline();
   });
@@ -2238,24 +2374,43 @@ const GLOSS_BI = {
 };
 const glossOf = k => (GLOSS_BI[k] || [[k, ""], [k, ""]])[LANG === "en" ? 1 : 0];
 const term = (key, text) => { const g = glossOf(key); return `<span class="term" tabindex="0" role="button" aria-label="${esc(g[0])}" data-term="${key}">${text ?? esc(g[0])}</span>`; };
-let termEl = null;
 function termTip(el) {
   const g = glossOf(el.dataset.term); if (!g[1]) return;
+  if (termEl && termEl !== el) hideTip();
   termEl = el;
+  el.setAttribute("aria-describedby", TIP.id);
   TIP.innerHTML = `<b>${esc(g[0])}</b><div class="tdef">${g[1]}</div>`;
   TIP.classList.add("on");
   const r = el.getBoundingClientRect(), w = TIP.offsetWidth, h = TIP.offsetHeight;
   TIP.style.left = Math.min(innerWidth - w - 8, Math.max(8, r.left - 6)) + "px";
   TIP.style.top = (r.bottom + h + 10 > innerHeight ? r.top - h - 8 : r.bottom + 8) + "px";
 }
-const termOff = () => { if (termEl) { termEl = null; hideTip(); } };
-document.addEventListener("mouseover", e => { const t = e.target.closest && e.target.closest(".term"); if (t && t !== termEl) termTip(t); });
-document.addEventListener("mouseout", e => { const t = e.target.closest && e.target.closest(".term"); if (t && !t.contains(e.relatedTarget)) termOff(); });
-document.addEventListener("focusin", e => { if (e.target.classList && e.target.classList.contains("term")) termTip(e.target); });
-document.addEventListener("focusout", e => { if (e.target.classList && e.target.classList.contains("term")) termOff(); });
+const termOff = () => { if (termEl) hideTip(); };
+const findTerm = target => target instanceof Element ? target.closest(".term") : null;
+function toggleTerm(t) {
+  // Focus and compat mouse events can show the hint before the first touch click.
+  if (termEl === t && termPinned) termOff();
+  else { termTip(t); termPinned = termEl === t; }
+}
+document.addEventListener("pointerover", e => {
+  const t = findTerm(e.target);
+  if (e.pointerType !== "touch" && t && t !== termEl && !termPinned) termTip(t);
+});
+document.addEventListener("pointerout", e => {
+  const t = findTerm(e.target);
+  if (t && t === termEl && !termPinned && t !== document.activeElement && !t.contains(e.relatedTarget)) termOff();
+});
+document.addEventListener("focusin", e => { const t = findTerm(e.target); if (t) termTip(t); });
+document.addEventListener("focusout", e => { if (termEl && findTerm(e.target) === termEl) termOff(); });
 document.addEventListener("click", e => {
-  const t = e.target.closest && e.target.closest(".term");
-  if (t) { e.preventDefault(); termEl === t && TIP.classList.contains("on") ? termOff() : termTip(t); } else termOff();
+  const t = findTerm(e.target);
+  if (t) { e.preventDefault(); toggleTerm(t); } else termOff();
+});
+document.addEventListener("keydown", e => {
+  if (e.defaultPrevented || e.isComposing || e.keyCode === 229 || e.metaKey || e.altKey || e.ctrlKey) return;
+  if (e.key === "Escape" && termEl) { e.preventDefault(); termOff(); return; }
+  const t = findTerm(e.target);
+  if (t && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); if (!e.repeat) toggleTerm(t); }
 });
 addEventListener("scroll", termOff, { passive: true });
 byId("dwBody").addEventListener("scroll", termOff, { passive: true });
@@ -2500,7 +2655,7 @@ RENDER.overview = function renderOverview() {
 
   tuckMeasured(v);
   const chain = $$(".chain-r", v);
-  chain.forEach(b => b.onclick = () => openDrawer("repair", b.dataset.rp, chain.map(x => x.dataset.rp)));
+  chain.forEach(b => b.onclick = () => openDrawer("repair", b.dataset.rp, chain.map(x => x.dataset.rp), null, b));
   renderGroupCards();
   renderSwarmFilters();
   renderSwarm();
@@ -2534,7 +2689,7 @@ RENDER.overview = function renderOverview() {
     <h3>${esc(r.short)}</h3><span class="rc-lab">${esc(r.headline.label)}</span>
     <span class="rc-read"><span class="b">${fmtNum(r.headline.before)}</span><span class="x">→</span><span class="a">${fmtNum(r.headline.after)}</span></span>
     <span class="rc-loc">${esc(repairLibrary(r))}</span></button>`).join("");
-  $$("#hRepairs [data-rp]").forEach(b => b.onclick = () => openDrawer("repair", b.dataset.rp, teaser.map(r => r.id)));
+  $$("#hRepairs [data-rp]").forEach(b => b.onclick = () => openDrawer("repair", b.dataset.rp, teaser.map(r => r.id), null, b));
 };
 
 const CITE = { tab: "bib", hash: null };
@@ -2626,7 +2781,7 @@ function renderGroupCards() {
   $$("#gcards [data-row]").forEach(b => b.onclick = () => {
     const c = COLBY[b.dataset.col], mk = c.lead;
     const order = c.rows.filter(r => r.metrics[mk]).sort((x, y) => devOf(mk, y.metrics[mk].value) - devOf(mk, x.metrics[mk].value)).map(r => r.id);
-    openDrawer("row", b.dataset.row, order);
+    openDrawer("row", b.dataset.row, order, null, b);
   });
 }
 
@@ -2703,7 +2858,7 @@ function renderSwarm() {
     const c = e.target.closest(".sw-pt"); if (!c) return;
     hideTip();
     const order = ROWS.filter(swMatch).filter(r => r.dev != null).sort((a, b) => b.dev - a.dev).map(r => r.id);
-    openDrawer("row", c.dataset.id, order.includes(c.dataset.id) ? order : [c.dataset.id, ...order]);
+    openDrawer("row", c.dataset.id, order.includes(c.dataset.id) ? order : [c.dataset.id, ...order], null, c);
   };
   byId("swLegend").innerHTML = Object.values(KINDS).map(k => `<span><i class="dot" style="background:${k.c}"></i>${k.label}</span>`).join("");
   paintSwarmText();
@@ -2818,8 +2973,7 @@ function buildList() {
     <div class="pager" id="lPager"></div>
     <div class="kbdhint"><span><span class="kbd">/</span> ${tx("搜索", "Search")}</span><span><span class="kbd">j</span> <span class="kbd">k</span> ${tx("切换", "Navigate")}</span><span><span class="kbd">Enter</span> ${tx("详情", "Open")}</span><span><span class="kbd">Esc</span> ${tx("关闭", "Close")}</span></div>
   </div></section>`;
-  const onQ = debounce(() => { LS.page = 1; updateList(); }, 120);
-  byId("lQ").addEventListener("input", e => { LS.q = e.target.value; onQ(); });
+  bindRecordSearch(byId("lQ"), "list", q => { if (q !== LS.q) { LS.q = q; LS.page = 1; updateList(); } });
   byId("lFbtn").onclick = () => { LS.facetsOpen = !LS.facetsOpen; updateList(); };
   byId("lGroup").onchange = e => { LS.group = e.target.value; LS.page = 1; updateList(); };
   byId("lSort").onchange = e => { [LS.sort, LS.dir] = e.target.value.split(":"); LS.page = 1; updateList(); };
@@ -2830,11 +2984,11 @@ function buildList() {
     const g = e.target.closest("[data-grp]");
     if (g) { const id = g.dataset.grp; LS.collapsed.has(id) ? LS.collapsed.delete(id) : LS.collapsed.add(id); updateList(); return; }
     const row = e.target.closest(".trow[data-id]");
-    if (row) openFromList(row.dataset.id);
+    if (row) openFromList(row.dataset.id, row);
   });
 }
-function openFromList(id) {
-  openDrawer("row", id, listView.map(r => r.id), listDrawerMove);
+function openFromList(id, trigger) {
+  openDrawer("row", id, listView.map(r => r.id), listDrawerMove, trigger);
 }
 function listDrawerMove(id) {
   LS.sel = id;
@@ -2845,12 +2999,14 @@ function listDrawerMove(id) {
   }
   $$("#lTbl .trow").forEach(b => b.classList.toggle("sel", b.dataset.id === id));
   writeListQuery();
-  if (id) $(`#lTbl .trow[data-id="${id}"]`)?.scrollIntoView({ block: "nearest" });
+  if (id) $(`#lTbl .trow[data-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "nearest" });
 }
 let PAGES = [];
 const pageOf = i => { if (i < 0) return 0; for (let p = 0; p < PAGES.length; p++) if (i >= PAGES[p][0] && i < PAGES[p][1]) return p + 1; return 0; };
 
 function updateList() {
+  const focused = document.activeElement;
+  const shouldRestore = byId("v-list").contains(focused) && !isOpen();
   const col = LS.col ? COLBY[LS.col] : null, ev = LS.ev ? EVALS.get(LS.ev) : null;
   byId("lScope").innerHTML = col || ev ? `<div class="chips scope">${col ? `<span class="chip"><small>${tx("场景", "Scenario")}</small>${esc(col.title)}<button type="button" data-clr="col" aria-label="Remove">×</button></span>` : ""}${ev ? `<span class="chip"><small>${tx("批次", "Batch")}</small>${esc(ev.ui.full)}<button type="button" data-clr="ev" aria-label="Remove">×</button></span>` : ""}</div>` : "";
   $$("#lScope [data-clr]").forEach(b => b.onclick = () => { LS[b.dataset.clr] = ""; LS.page = 1; updateList(); });
@@ -2907,7 +3063,7 @@ function updateList() {
   if (LS.page > nPages) LS.page = nPages;
   const [a, b] = PAGES[LS.page - 1] || [0, 0];
   const total = ROWS.length;
-  byId("lRecNote").textContent = `${fmtInt(selRows().length)} ${tx("条记录", "records")}`;
+  byId("lRecNote").textContent = `${fmtInt(view.length)} ${tx("条记录", "records")}`;
   byId("lCount").innerHTML = view.length ? `<b>${fmtInt(a + 1)}–${fmtInt(b)}</b> / ${fmtInt(view.length)}${view.length !== total ? ` (${fmtInt(total)})` : ""}` : `0`;
 
   const tbl = byId("lTbl"), rowCtx = { plat: selVal("plat"), fw: selVal("fw") };
@@ -2942,10 +3098,21 @@ function updateList() {
       <nav class="pages" aria-label="Pagination"><button type="button" data-p="${P - 1}" ${P <= 1 ? "disabled" : ""} aria-label="Previous">‹</button>${nums.map(n => n === "…" ? `<span>…</span>` : `<button type="button" data-p="${n}" ${n === P ? 'aria-current="page"' : ""}>${n}</button>`).join("")}<button type="button" data-p="${P + 1}" ${P >= nPages ? "disabled" : ""} aria-label="Next">›</button></nav>`;
     byId("lPer").onchange = e => { LS.per = +e.target.value; LS.page = 1; updateList(); };
     byId("lFold") && (byId("lFold").onclick = () => { if (LS.collapsed.size) LS.collapsed.clear(); else groups.forEach(g => LS.collapsed.add(g.id)); updateList(); });
-    $$("#lPager [data-p]").forEach(x => x.onclick = () => { LS.page = +x.dataset.p; LS.cursor = -1; updateList(); byId("lRecs").scrollIntoView({ block: "start" }); });
+    $$("#lPager [data-p]").forEach(x => x.onclick = () => {
+      LS.page = +x.dataset.p; LS.cursor = -1; updateList();
+      const records = byId("lRecs"); records.scrollIntoView({ block: "start" }); focusAt(records);
+    });
   } else pg.innerHTML = "";
   LS.cursor = -1;
   writeListQuery();
+  if (termEl && !termEl.isConnected) hideTip();
+  if (shouldRestore && !focused.isConnected) {
+    const attrs = ["data-id", "data-sort", "data-grp", "data-sk", "data-sv", "data-f", "data-v", "data-qp"];
+    const match = attrs.filter(key => focused.hasAttribute(key));
+    const replacement = (focused.id ? byId(focused.id) : null) || (match.length ?
+      $$("#v-list [" + match[0] + "]").find(el => match.every(key => el.getAttribute(key) === focused.getAttribute(key))) : null);
+    if (!focusAt(replacement)) focusAt(byId("lQ"));
+  }
 }
 
 /* ======================================================================
@@ -3160,7 +3327,7 @@ function renderReport() {
       <div class="panel sjs">${subjRows}</div></div>`;
 
   byId("repCopy").onclick = e => copyText(location.href, e.currentTarget);
-  $$("#lRep [data-rp]").forEach(b => b.onclick = () => openDrawer("repair", b.dataset.rp, [b.dataset.rp]));
+  $$("#lRep [data-rp]").forEach(b => b.onclick = () => openDrawer("repair", b.dataset.rp, [b.dataset.rp], null, b));
   byId("vtMore") && (byId("vtMore").onclick = e => { $$("#lRep .vt-r.more").forEach(x => x.classList.remove("more")); e.currentTarget.remove(); });
   $$("#lRep [data-subj]").forEach(b => b.onclick = () => {
     const k = b.dataset.subj; LS.f.subject = new Set(k === "其它" ? ["未分类"] : [k]); LS.page = 1; LS.facetsOpen = true; updateList();
@@ -3171,7 +3338,7 @@ function renderReport() {
     const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([RECIPE_TXT[b.dataset.rdl]], { type: "text/markdown;charset=utf-8" }));
     a.download = `numericbridge-recipe-${b.dataset.rdl}.md`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 500);
   });
-  $$("#lRep [data-krows]").forEach(b => b.onclick = () => { const ids = b.dataset.krows.split(","); openDrawer("row", ids[0], ids); });
+  $$("#lRep [data-krows]").forEach(b => b.onclick = () => { const ids = b.dataset.krows.split(","); openDrawer("row", ids[0], ids, null, b); });
 }
 
 const RECIPE_TXT = {};
@@ -3243,8 +3410,8 @@ function makeScene(root, cfg) {
   chips.style.setProperty("--n", steps.length);
   chips.innerHTML = steps.map((s, i) => `<button type="button" data-i="${i}"><span>${String(i + 1).padStart(2, "0")}</span>${esc(s.label)}</button>`).join("");
   const chipEls = [...chips.children];
-  const reduced = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
-  let time = 0, playing = false, visible = false, last = null, auto = !reduced(), cur = -1;
+  const motion = matchMedia("(prefers-reduced-motion: reduce)");
+  let time = 0, playing = false, visible = false, last = null, auto = !motion.matches, cur = -1, frame = null;
   const stepAt = t => steps.reduce((k, s, i) => (t >= s.at ? i : k), 0);
   function paint(t) {
     cfg.render(t);
@@ -3264,33 +3431,48 @@ function makeScene(root, cfg) {
     void root.offsetWidth;
     requestAnimationFrame(() => requestAnimationFrame(() => root.classList.remove("snap")));
   }
+  function syncFrame() {
+    if (playing && visible && !document.hidden) {
+      if (frame === null) frame = requestAnimationFrame(tick);
+    } else {
+      if (frame !== null) cancelAnimationFrame(frame);
+      frame = last = null;
+    }
+  }
   function setPlaying(v) {
     playing = v; last = null; root.dataset.playing = String(v);
     playBtn.textContent = v ? tx("暂停", "Pause") : tx("播放", "Play"); playBtn.setAttribute("aria-pressed", String(v));
+    cap.setAttribute("aria-live", v ? "off" : "polite");
+    syncFrame();
   }
   function tick(now) {
-    if (playing && visible && !document.hidden) {
-      if (last !== null) {
-        time += Math.min(0.1, (now - last) / 1000);
-        if (time >= cfg.loop) { snapTo(0); last = now; requestAnimationFrame(tick); return; }
-      }
-      last = now; paint(time);
-    } else last = null;
-    requestAnimationFrame(tick);
+    frame = null;
+    if (!playing || !visible || document.hidden) { last = null; return; }
+    if (last !== null) time += Math.min(0.1, (now - last) / 1000);
+    if (time >= cfg.loop) snapTo(0); else paint(time);
+    last = now;
+    syncFrame();
   }
   playBtn.onclick = () => { auto = false; setPlaying(!playing); };
   replayBtn.onclick = () => { auto = false; snapTo(0); setPlaying(true); };
-  chipEls.forEach((b, i) => { b.onclick = () => { auto = false; snapTo(steps[i].at + 0.001); }; });
+  chipEls.forEach((b, i) => { b.onclick = () => {
+    // Automatic playback should never move on while someone is reading a chosen step.
+    auto = false; setPlaying(false); snapTo(steps[i].at + 0.001);
+  }; });
   if ("IntersectionObserver" in window) {
     new IntersectionObserver(es => {
       const e = es[es.length - 1];
       visible = e.isIntersecting; last = null;
       if (auto && e.intersectionRatio >= 0.35) { auto = false; setPlaying(true); }
+      else syncFrame();
     }, { threshold: [0, 0.35] }).observe(stage);
   } else visible = true;
-  if (reduced()) time = cfg.still;
+  document.addEventListener("visibilitychange", syncFrame);
+  motion.addEventListener("change", e => {
+    if (e.matches) { auto = false; setPlaying(false); }
+  });
+  if (motion.matches) time = cfg.still;
   setPlaying(false); snapTo(time);
-  requestAnimationFrame(tick);
   SCENES[cfg.name] = {
     seek(t) { auto = false; setPlaying(false); snapTo(Math.max(0, Math.min(cfg.loop - 0.01, t))); return time; },
     play() { auto = false; setPlaying(true); }, pause() { auto = false; setPlaying(false); },
@@ -3362,7 +3544,7 @@ function scenePair(F) {
   const gA = $$('[data-side="a"] .vgrid i', root), gB = $$('[data-side="b"] .vgrid i', root), dEls = $$(".dgrid i", root);
   dEls.forEach((e, i) => e.style.setProperty("--c", `var(--t${tierOfD(D[i])})`));
   const maxEl = byId("paMax"), covEl = byId("paCov"), rec = byId("paRec"), cov = r.coverage || {};
-  rec.onclick = e => { const b = e.target.closest(".trow"); if (b) openDrawer("row", b.dataset.id, [b.dataset.id]); };
+  rec.onclick = e => { const b = e.target.closest(".trow"); if (b) openDrawer("row", b.dataset.id, [b.dataset.id], null, b); };
   const opState = (els, t, t0, d) => els.forEach((e, i) => { const s = t0 + i * d; e.classList.toggle("run", t >= s && t < s + d); e.classList.toggle("done", t >= s + d); });
   makeScene(root, {
     name: "pair", loop: 18, still: 14, stableCaption: true,
@@ -3953,7 +4135,15 @@ RENDER.how = function renderHow() {
     </section>
   </div>`;
   sceneAxis(F); scenePair(F); sceneOrder(F); sceneRepair(F);
-  $$("#v-how [data-go]").forEach(a => { a.onclick = e => { e.preventDefault(); byId(`how-${a.dataset.go}`)?.scrollIntoView({ block: "start" }); }; });
+  $$("#v-how [data-go]").forEach(a => { a.onclick = e => {
+    if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+    const section = byId("how-" + a.dataset.go);
+    if (!section) return;
+    e.preventDefault();
+    const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    section.scrollIntoView({ block: "start", behavior: reduce ? "instant" : "auto" });
+    if (!e.detail) focusAt($("h2", section) || section);
+  }; });
   tuckMeasured(byId("v-how"));
 };
 
@@ -4030,7 +4220,7 @@ function writeCmpQuery() {
   const query = new URLSearchParams({ p: CS.picks.join("|") });
   if (CS.subject) query.set("s", CS.subject);
   if (CS.optimized) query.set("optimized", "1");
-  history.replaceState(null, "", `#/compare?${query}`);
+  history.replaceState(history.state, "", `#/compare?${query}`);
 }
 const cmpBarWidth = d => `${Math.max(1.5, logPos(d)).toFixed(1)}%`;
 const cmpBar = d => `<span class="cmp-bar" aria-hidden="true"><i style="--bar:${cmpBarWidth(d)}"></i></span>`;
@@ -4371,7 +4561,7 @@ RENDER.upstream = function renderUpstream(h) {
     $$("#uProj [data-up]").forEach(b => b.onclick = () => { US.project = b.dataset.up; paintUpstream(); });
     byId("uClr").onclick = () => { US.status = ""; US.project = ""; paintUpstream(); };
     byId("uShare").onclick = e => copyText(location.href, e.currentTarget);
-    const openUp = card => card && openDrawer("upstream", card.dataset.upId, upView.map(x => x.id), upDrawerMove);
+    const openUp = card => card && openDrawer("upstream", card.dataset.upId, upView.map(x => x.id), upDrawerMove, card);
     byId("uCards").addEventListener("click", e => {
       if (e.target.closest("a")) return;
       openUp(e.target.closest("[data-up-id]"));
@@ -4485,11 +4675,11 @@ RENDER.platform = function renderPlatform(h) {
   const top = [...rs].filter(r => r.dev != null).sort((a, b) => b.dev - a.dev);
   const pHead = `<div class="trow thead"><span></span><span class="th">测项</span><span class="th">被测端 / 路径 A</span><span class="th" style="justify-content:center">↔</span><span class="th">对照端 / 路径 B</span><span class="th r">主读数</span></div>`;
   byId("pRows").innerHTML = pHead + top.slice(0, 10).map(r => rowHtml(r, "", null, { plat: p })).join("");
-  byId("pRows").onclick = e => { const b = e.target.closest(".trow[data-id]"); if (b) openDrawer("row", b.dataset.id, top.map(r => r.id)); };
+  byId("pRows").onclick = e => { const b = e.target.closest(".trow[data-id]"); if (b) openDrawer("row", b.dataset.id, top.map(r => r.id), null, b); };
   $$("#v-platform [data-open]").forEach(b => b.onclick = () => {
     const lead = b.dataset.lead;
     const order = rs.filter(r => r.subject === b.dataset.subj && r.metrics[lead]).sort((x, y) => devOf(lead, y.metrics[lead].value) - devOf(lead, x.metrics[lead].value)).map(r => r.id);
-    openDrawer("row", b.dataset.open, order);
+    openDrawer("row", b.dataset.open, order, null, b);
   });
   $$("#v-platform [data-partner]").forEach(b => b.onclick = () => {
     const o = b.dataset.partner;
@@ -4579,13 +4769,12 @@ function buildRepairs() {
     <span class="count" id="rCount" role="status"></span>
   </div></div>
   <div class="wrap repair-list" id="rBody"></div>`;
-  const onQ = debounce(() => { if (parseHash().name === "repairs") updateRepairs(); }, 120);
-  byId("rQ").addEventListener("input", e => { RS.q = e.target.value; onQ(); });
+  bindRecordSearch(byId("rQ"), "repairs", q => { if (q !== RS.q) { RS.q = q; updateRepairs(); } });
   byId("rLib").onchange = e => { RS.lib = e.target.value; updateRepairs(); };
   byId("rStatus").onchange = e => { RS.status = e.target.value; updateRepairs(); };
   byId("rBody").addEventListener("click", e => {
     const row = e.target.closest("[data-rp]");
-    if (row) openDrawer("repair", row.dataset.rp, repView.map(r => r.id), repDrawerMove);
+    if (row) openDrawer("repair", row.dataset.rp, repView.map(r => r.id), repDrawerMove, row);
   });
 }
 function repDrawerMove(id) {
@@ -4654,25 +4843,39 @@ function paintRepair(rp) {
    global: keys, csv, theme, boot
    ====================================================================== */
 addEventListener("keydown", e => {
-  const typing = /input|textarea|select/i.test(e.target.tagName);
-  if (e.key === "Escape") { if (isOpen()) { closeDrawer(); e.preventDefault(); } else if (typing) e.target.blur(); return; }
-  if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
-  const name = parseHash().name;
-  if (e.key === "/") { const q = name === "cases" ? $(".lc-option-dialog[open] input", byId("v-cases")) : name === "repairs" ? byId("rQ") : name === "list" ? byId("lQ") : null; if (q && !byId(VIEWS[name]).hidden) { e.preventDefault(); q.focus(); q.select(); } return; }
+  if (e.defaultPrevented || e.isComposing || e.keyCode === 229 || e.metaKey || e.ctrlKey || e.altKey) return;
+  const target = e.target instanceof Element ? e.target : null;
+  const editing = target?.closest("input, textarea, select, [contenteditable]:not([contenteditable=false])");
   if (isOpen()) {
-    if (e.key === "j" || e.key === "ArrowDown") { e.preventDefault(); moveDrawer(1); }
-    if (e.key === "k" || e.key === "ArrowUp") { e.preventDefault(); moveDrawer(-1); }
+    if (e.key === "Escape") { e.preventDefault(); closeDrawer(); }
+    else if (e.key === "Tab") trapDrawerTab(e);
+    else if (!editing) {
+      // Keep arrows on the navigation toolbar, but never steal reading scroll.
+      const arrows = target?.closest(".dw-top");
+      const next = e.key === "j" || (arrows && e.key === "ArrowDown");
+      const prev = e.key === "k" || (arrows && e.key === "ArrowUp");
+      if (next || prev) { e.preventDefault(); moveDrawer(next ? 1 : -1); }
+    }
     return;
   }
-  if (name === "list" && (e.key === "j" || e.key === "k" || e.key === "Enter")) {
-    const rows = $$("#lTbl .trow[data-id]");
-    if (!rows.length) return;
-    if (e.key === "Enter") { if (LS.cursor >= 0) openFromList(rows[LS.cursor].dataset.id); return; }
-    e.preventDefault();
-    LS.cursor = Math.max(0, Math.min(rows.length - 1, LS.cursor + (e.key === "j" ? 1 : -1)));
-    rows.forEach((r, i) => r.classList.toggle("cur", i === LS.cursor));
-    rows[LS.cursor].scrollIntoView({ block: "nearest" }); rows[LS.cursor].focus({ preventScroll: true });
+  if (editing) return;
+  const name = parseHash().name;
+  const nativeDialog = document.querySelector("dialog[open]");
+  if (e.key === "/") {
+    const q = nativeDialog ? (name === "cases" ? $(".lc-option-dialog[open] input", byId("v-cases")) : null)
+      : name === "repairs" ? byId("rQ") : name === "list" ? byId("lQ") : null;
+    if (acceptsFocus(q)) { e.preventDefault(); q.focus(); q.select(); }
+    return;
   }
+  if (nativeDialog || name !== "list" || !["j", "k"].includes(e.key)) return;
+  const rows = $$("#lTbl .trow[data-id]");
+  if (!rows.length) return;
+  e.preventDefault();
+  const focusedRow = rows.indexOf(target?.closest(".trow[data-id]"));
+  const from = focusedRow >= 0 ? focusedRow : LS.cursor;
+  LS.cursor = Math.max(0, Math.min(rows.length - 1, from + (e.key === "j" ? 1 : -1)));
+  rows.forEach((r, i) => r.classList.toggle("cur", i === LS.cursor));
+  rows[LS.cursor].scrollIntoView({ block: "nearest" }); focusAt(rows[LS.cursor]);
 });
 byId("csv").onclick = () => {
   const name = parseHash().name;
@@ -5102,10 +5305,37 @@ const bootInEnglish = (() => {
   catch (e) { return false; }
 })();
 if (bootInEnglish) boot.textContent = "Loading…";
-Promise.resolve().then(() => buildBoard("./data/")).then(start).catch(err => {
-  console.error("NumericBridge startup failed", err);
-  boot.textContent = bootInEnglish ? "Could not load community data. Refresh to try again." : "加载失败，请刷新重试。";
-});
+let bootPending = false, bootStarting = false;
+function bootBoard(retry) {
+  if (bootPending) return;
+  if (bootStarting) { location.reload(); return; }
+  bootPending = true;
+  if (retry) {
+    retry.setAttribute("aria-disabled", "true");
+    boot.firstChild.textContent = bootInEnglish ? "Loading… " : "正在加载… ";
+  }
+  Promise.resolve().then(() => buildBoard("./data/")).then(data => {
+    bootStarting = true;
+    const restoreFocus = retry && document.activeElement === retry;
+    start(data);
+    if (restoreFocus && document.activeElement === document.body) {
+      const heading = document.querySelector("#main .view:not([hidden]) h1") || document.getElementById("main");
+      heading.tabIndex = -1;
+      heading.focus({ preventScroll: true });
+    }
+  }).catch(err => {
+    console.error("NumericBridge startup failed", err);
+    const link = retry || document.createElement("button");
+    link.type = "button";
+    link.className = "link";
+    link.textContent = bootInEnglish ? "Refresh to try again" : "刷新重试";
+    link.removeAttribute("aria-disabled");
+    link.onclick = () => bootBoard(link);
+    if (retry) boot.firstChild.textContent = bootInEnglish ? "Could not load community data. " : "加载失败，请";
+    else boot.replaceChildren(bootInEnglish ? "Could not load community data. " : "加载失败，请", link, bootInEnglish ? "." : "。");
+  }).finally(() => { bootPending = false; });
+}
+bootBoard();
 </script>
 </body>
 </html>

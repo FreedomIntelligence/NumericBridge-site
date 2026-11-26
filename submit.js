@@ -81,14 +81,18 @@
     return { httpStatus: response.status };
   }
 
-  async function lookupStatus(file, send = fetch) {
-    let receipt;
+  const INVALID_RECEIPT = "请选择下载的有效私密回执 JSON。";
+
+  async function readReceipt(file) {
     try {
-      if (file.size < 1 || file.size > MAX_RECEIPT_BYTES) throw new Error("Invalid receipt size");
-      receipt = privateReceipt(JSON.parse(await file.text()));
+      if (file.size < 1 || file.size > MAX_RECEIPT_BYTES) return null;
+      return privateReceipt(JSON.parse(await file.text()));
     } catch {
-      return "请选择下载的有效私密回执 JSON。";
+      return null;
     }
+  }
+
+  async function fetchStatus(receipt, send = fetch) {
     const response = await send(PATH + "/" + receipt.receipt_id, {
       ...REQUEST_OPTIONS, method: "GET", headers: { Authorization: "Bearer " + receipt.status_token },
     });
@@ -99,81 +103,136 @@
     return "审核状态：" + STATES.get(value.review_state);
   }
 
+  async function lookupStatus(file, send = fetch) {
+    const receipt = await readReceipt(file);
+    return receipt ? fetchStatus(receipt, send) : INVALID_RECEIPT;
+  }
+
+  // Native disabled buttons may lose focus. Restore it only if the action still owns it.
+  function actionFocus(...controls) {
+    const ownsFocus = element => element === document.body || controls.includes(element);
+    let canRestore = ownsFocus(document.activeElement);
+    const noticeFocus = event => { if (!ownsFocus(event.target)) canRestore = false; };
+    document.addEventListener("focusin", noticeFocus);
+    return target => {
+      document.removeEventListener("focusin", noticeFocus);
+      if (target && canRestore && ownsFocus(document.activeElement)) target.focus();
+    };
+  }
+
   function setup() {
     const byId = id => document.getElementById(id);
     const fileInput = byId("draft-file"), confirm = byId("confirm-draft"), send = byId("send-draft");
     const preview = byId("draft-preview"), title = byId("draft-title"), content = byId("draft-content"), digest = byId("draft-digest");
     const message = byId("submit-message"), receiptPanel = byId("receipt"), receiptLabel = byId("receipt-label");
     const receiptFile = byId("receipt-file"), lookup = byId("lookup-status"), lookupResult = byId("lookup-result");
-    let draft = null, receipt = null, version = 0, sending = false, checking = false;
+    let draft = null, consent = null, receipt = null, version = 0, sending = false, checking = null;
     if (!globalThis.crypto?.subtle) {
       message.textContent = "请通过 HTTPS 打开本站并使用支持 SHA-256 的浏览器。";
       return;
     }
-    fileInput.disabled = receiptFile.disabled = confirm.checked = false;
     fileInput.value = receiptFile.value = "";
-    const syncSend = () => { send.disabled = sending || !draft || !confirm.checked; };
+    receiptFile.disabled = false;
+    const selected = input => input.files[0];
+    const isSelectedDraft = candidate => candidate && candidate.file === selected(fileInput);
+    const clearConsent = () => {
+      consent = null;
+      confirm.checked = false;
+    };
+    const syncDraftControls = () => {
+      fileInput.disabled = sending;
+      confirm.disabled = sending || !isSelectedDraft(draft);
+      send.disabled = confirm.disabled || consent !== draft || !confirm.checked;
+    };
     const clearDraft = () => {
       draft = null;
-      confirm.checked = false;
+      clearConsent();
       preview.hidden = true;
       title.textContent = content.textContent = digest.textContent = "";
-      syncSend();
+      syncDraftControls();
     };
+    const syncLookup = () => { lookup.disabled = !!checking || !selected(receiptFile); };
+    clearDraft();
+    syncLookup();
 
     fileInput.addEventListener("change", async () => {
       const selection = ++version;
       clearDraft();
       message.textContent = "";
-      const file = fileInput.files[0];
+      const file = selected(fileInput);
       if (!file) return;
+      const isCurrent = () => selection === version && selected(fileInput) === file;
       message.textContent = "正在本地读取草稿…";
       try {
         const result = await readDraft(file);
-        if (selection !== version) return;
-        draft = result;
+        if (!isCurrent()) return;
+        draft = { ...result, file };
+        clearConsent();
         title.textContent = result.title;
         content.textContent = result.text;
         digest.textContent = result.digest;
         preview.hidden = false;
         message.textContent = "草稿已在本地打开，尚未发送。";
       } catch (error) {
-        if (selection === version) {
-          // Never show browser exceptions that might include filename or draft data.
-          message.textContent = error instanceof DraftError ? error.message : "无法在本地读取草稿。";
-        }
+        if (!isCurrent()) return;
+        // Reset the picker so the same file can be chosen again after a local failure.
+        fileInput.value = "";
+        // Never show browser exceptions that might include filename or draft data.
+        message.textContent = error instanceof DraftError ? error.message : "无法在本地读取草稿。";
+      } finally {
+        if (selection === version) syncDraftControls();
       }
     });
-    confirm.addEventListener("change", syncSend);
+    confirm.addEventListener("change", () => {
+      if (sending || !isSelectedDraft(draft) || !confirm.checked) clearConsent();
+      else consent = draft;
+      syncDraftControls();
+    });
     send.addEventListener("click", async () => {
-      if (sending || !draft || !confirm.checked) return;
-      if (location.origin !== PUBLIC_ORIGIN) {
-        message.textContent = "只能在 https://numericbridge.com 上发送草稿。";
-        return;
-      }
-      sending = fileInput.disabled = confirm.disabled = true;
-      confirm.checked = false;
-      syncSend();
-      message.textContent = "正在发送草稿…";
+      if (sending || !isSelectedDraft(draft) || consent !== draft || !confirm.checked) return;
+      const submitted = draft;
+      const stillSelected = () => draft === submitted && isSelectedDraft(submitted);
+      const restoreFocus = actionFocus(fileInput, confirm, send);
+      let nextFocus;
+      clearConsent();
       try {
-        const result = await submitDraft(draft);
+        if (location.origin !== PUBLIC_ORIGIN) {
+          message.textContent = "只能在 https://numericbridge.com 上发送草稿。";
+          nextFocus = confirm;
+          return;
+        }
+        sending = true;
+        syncDraftControls();
+        message.textContent = "正在发送草稿…";
+        const result = await submitDraft(submitted);
         if (!result.receipt) {
-          message.textContent = result.httpStatus === 429 ? "审核收件箱暂时繁忙，请稍后重新确认并发送同一草稿。"
-            : "未收到回执（HTTP " + result.httpStatus + "）。请保留原始草稿。";
+          if (stillSelected()) {
+            message.textContent = result.httpStatus === 429 ? "审核收件箱暂时繁忙，请稍后重新确认并发送同一草稿。"
+              : "未收到回执（HTTP " + result.httpStatus + "）。请保留原始草稿。";
+            nextFocus = confirm;
+          }
           return;
         }
         receipt = result.receipt;
         receiptLabel.textContent = (receipt.reused ? "已找回已有回执：" : "草稿已收到，等待审核：") + receipt.receipt_id;
         receiptPanel.hidden = false;
-        message.textContent = "";
-        clearDraft();
-        fileInput.value = "";
-        receiptLabel.focus();
+        if (stillSelected()) {
+          const wasReadingPreview = document.activeElement === content;
+          fileInput.value = "";
+          clearDraft();
+          message.textContent = "";
+          if (wasReadingPreview) receiptLabel.focus();
+          else nextFocus = receiptLabel;
+        }
       } catch {
-        message.textContent = "未收到有效回执。请保留原始草稿，稍后可重新确认并发送同一文件。";
+        if (stillSelected()) {
+          message.textContent = "未收到有效回执。请保留原始草稿，稍后可重新确认并发送同一文件。";
+          nextFocus = confirm;
+        }
       } finally {
-        sending = fileInput.disabled = confirm.disabled = false;
-        syncSend();
+        sending = false;
+        syncDraftControls();
+        restoreFocus(nextFocus);
       }
     });
 
@@ -188,24 +247,51 @@
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     });
     receiptFile.addEventListener("change", () => {
-      lookup.disabled = checking || !receiptFile.files[0];
+      // A newer selection can be checked without waiting for the old one.
+      checking?.restoreFocus();
+      checking = null;
       lookupResult.textContent = "";
+      syncLookup();
     });
     lookup.addEventListener("click", async () => {
-      const file = receiptFile.files[0];
+      const file = selected(receiptFile);
       if (!file || checking) return;
       if (location.origin !== PUBLIC_ORIGIN) {
         lookupResult.textContent = "只能在 https://numericbridge.com 上查询状态。";
         return;
       }
-      checking = lookup.disabled = receiptFile.disabled = true;
+      const attempt = { restoreFocus: actionFocus(lookup) };
+      checking = attempt;
+      const isCurrent = () => checking === attempt && selected(receiptFile) === file;
+      let nextFocus;
+      syncLookup();
       lookupResult.textContent = "正在查询状态…";
       try {
-        lookupResult.textContent = await lookupStatus(file);
+        const selectedReceipt = await readReceipt(file);
+        if (!isCurrent()) return;
+        if (!selectedReceipt) {
+          receiptFile.value = "";
+          lookupResult.textContent = INVALID_RECEIPT;
+          nextFocus = receiptFile;
+          return;
+        }
+        const label = await fetchStatus(selectedReceipt);
+        if (isCurrent()) {
+          lookupResult.textContent = label;
+          nextFocus = lookup;
+        }
       } catch {
-        lookupResult.textContent = "暂时无法查询状态，请稍后再试。";
+        if (isCurrent()) {
+          lookupResult.textContent = "暂时无法查询状态，请稍后再试。";
+          nextFocus = lookup;
+        }
       } finally {
-        checking = lookup.disabled = receiptFile.disabled = false;
+        if (checking === attempt) {
+          if (!nextFocus) lookupResult.textContent = "";
+          checking = null;
+          syncLookup();
+          attempt.restoreFocus(nextFocus);
+        }
       }
     });
   }

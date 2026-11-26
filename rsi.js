@@ -4,7 +4,11 @@
   const labels = {running:'运行中',completed:'已结束',failed:'执行失败',accepted:'已接受',rejected:'未接受',evaluating:'评测中',construction:'构建候选',evaluation:'独立评测',finished:'已结束'};
   const kinds = {tool:'工具',context:'上下文',procedure:'执行流程',data:'数据',weights:'权重'};
   const titles = {continuation:'反馈驱动 · 继续迭代',diagnostics:'原生错误反馈',interface:'接口与工具复用',budget:'预算与工具接口',recovery:'执行恢复',autonomous:'自主瓶颈选择',hour:'首轮自主改进'};
-  let snapshot, selected, request = 0;
+  const pollInterval = 60000;
+  const requestTimeout = 15000;
+  const expandedRounds = new Map();
+  let snapshot, runSignature, selected, renderedRun, pending = false, lastCheck = 0;
+  let runButtons = new Map(), roundDetails = new Map();
   const text = (tag, value, cls) => {const el=document.createElement(tag);el.textContent=value;if(cls)el.className=cls;return el;};
   const num = n => typeof n==='number' && Number.isFinite(n) ? n.toLocaleString('zh-CN',{maximumFractionDigits:0}) : '未知';
   const seconds = n => typeof n==='number' ? `${num(n)} s` : '未知';
@@ -20,15 +24,42 @@
     data.forEach(([label,value,foot],i)=>{const div=text('div','','stat');div.append(text('span',label,'stat-label'),text('strong',value,'stat-value'+(i===1?' version':'')),text('span',foot,'stat-foot'));el.append(div);});
   }
   function runList() {
-    const container=$('runs');container.replaceChildren();const q=$('run-search').value.trim().toLowerCase();
+    const container=$('runs');
+    const focused=[...runButtons].find(([,button])=>button===document.activeElement)?.[0];
+    const q=$('run-search').value.trim().toLowerCase();
+    const buttons=new Map();
     snapshot.runs.filter(r=>r.id.toLowerCase().includes(q)||title(r).includes(q)).forEach(run=>{
       const button=text('button','','run-button'+(run.id===selected?' active':''));button.type='button';button.setAttribute('aria-pressed',String(run.id===selected));
       const row=text('span','','run-date');row.append(text('span',date(run.id)),badge(run.status));button.append(text('span',title(run),'run-name'),row);
-      button.onclick=()=>{selected=run.id;history.replaceState(null,'','#'+encodeURIComponent(selected));$('round-filter').value='all';render();};container.append(button);
-    });$('run-count').textContent=snapshot.runs.length;
+      button.onclick=()=>{
+        if (runFromHash()!==run.id) history.pushState(null,'','#'+encodeURIComponent(run.id));
+        selectRun(run.id);
+      };
+      buttons.set(run.id,button);
+    });
+    container.replaceChildren(...buttons.values());
+    runButtons=buttons;
+    $('run-count').textContent=snapshot.runs.length;
+    if (focused) (runButtons.get(focused)||runButtons.get(selected)||$('run-search')).focus({preventScroll:true});
   }
   function renderRounds(run) {
-    const holder=$('rounds');holder.replaceChildren();
+    const holder=$('rounds');
+    let focused;
+    if (renderedRun) {
+      const expanded=expandedRounds.get(renderedRun)||new Set();
+      for (const [index,details] of roundDetails) {
+        if (details.open) expanded.add(index);
+        else expanded.delete(index);
+        if (details.contains(document.activeElement)) focused={run:renderedRun,index};
+      }
+      if (expanded.size) expandedRounds.set(renderedRun,expanded);
+      else expandedRounds.delete(renderedRun);
+    }
+    renderedRun=run?.id;
+    roundDetails=new Map();
+    holder.replaceChildren();
+    if (focused && focused.run!==renderedRun) $('round-filter').focus({preventScroll:true});
+    if (!run) return;
     const filter=$('round-filter').value;
     const rounds=run.rounds.filter(r=>filter==='all'||r.status===filter);
     if(run.status==='running'&&filter==='all') {
@@ -36,9 +67,11 @@
       const calls=run.live_activity;live.append(text('p',calls?`已观测 ${num(calls.tool_calls)} 次工具调用。完整轮次完成后显示变更与判定。`:'等待下一份完整轮次回执。'));
       if(calls&&Object.keys(calls.tools).length)live.append(text('span',Object.entries(calls.tools).map(([k,v])=>`${k} × ${v}`).join(' · '),'mono'));holder.append(live);
     }
-    if(!rounds.length) {if(run.status!=='running'||filter!=='all')holder.append(text('p','没有符合条件的轮次。','empty'));return;}
+    if(!rounds.length && (run.status!=='running'||filter!=='all'))holder.append(text('p','没有符合条件的轮次。','empty'));
     rounds.forEach(round=>{
       const details=document.createElement('details');details.className='round';
+      if (expandedRounds.get(run.id)?.has(round.index)) details.open=true;
+      roundDetails.set(round.index,details);
       const summary=document.createElement('summary');summary.append(text('span',String(round.index).padStart(2,'0'),'round-index'),text('span',round.changes.length?round.changes.map(c=>kinds[c.kind]||c.kind).join(' + '):'未形成可评测候选','round-heading'),badge(round.status));details.append(summary);
       const body=text('div','','round-body');
       if(round.version)body.append(text('p',`候选版本 ${version(round.version)}`,'mono muted'));
@@ -50,9 +83,20 @@
       if(round.activity)body.append(text('p',`已归档工具调用 ${num(round.activity.tool_calls)} 次 · ${Object.entries(round.activity.tools).map(([k,v])=>`${k} × ${v}`).join(' / ')}`,'muted'));
       details.append(body);holder.append(details);
     });
+    if (focused?.run===renderedRun) {
+      const summary=roundDetails.get(focused.index)?.firstElementChild;
+      (summary||$('round-filter')).focus({preventScroll:true});
+    }
   }
   function render() {
-    stats();runList();const run=snapshot.runs.find(r=>r.id===selected);if(!run)return;
+    stats();runList();const run=snapshot.runs.find(r=>r.id===selected);
+    if (!run) {
+      $('run-title').textContent='暂无运行记录';
+      $('run-status').textContent='—';
+      for (const key of ['run-id','run-meta','scope','costs','baseline-note','audit']) $(key).replaceChildren();
+      renderRounds();
+      return;
+    }
     $('run-title').textContent=title(run);$('run-id').textContent=run.id;$('run-status').replaceChildren(badge(run.status));
     const meta=$('run-meta');meta.replaceChildren();[run.model,run.commit?`代码 ${run.commit.slice(0,8)}`:'代码版本未归档',`启用 ${version(run.active_version)}`].forEach(v=>meta.append(text('span',v)));
     $('scope').textContent=run.scope;
@@ -61,14 +105,90 @@
     $('baseline-note').textContent=run.baseline.reused?`复用成功基线：历史成本 ${seconds(run.baseline.historical.seconds)} / ${num(run.baseline.historical.usage.total_tokens)} tok，本轮基线新增成本为 0。`:'时间与原始 token 分开记录。缓存拆分未取得时保持未知；本页不估算费用。';
     renderRounds(run);const audit=$('audit');audit.replaceChildren();if(run.stop_reason)audit.append(text('p',`停止原因：${run.stop_reason}`));run.maintenance_notes.forEach(v=>audit.append(text('p',v)));if(run.acceptance_note)audit.append(text('p',run.acceptance_note));if(run.evidence.archive_sha256)audit.append(text('p',`证据归档 SHA256 · ${run.evidence.archive_sha256}`,'mono'));
   }
-  async function load() {
-    const id=++request;$('refresh').disabled=true;
-    try {const response=await fetch('./data/rsi.json',{cache:'no-store'});if(!response.ok)throw new Error(`HTTP ${response.status}`);const data=await response.json();if(id!==request)return;if(data.schema_version!==1||!Array.isArray(data.runs))throw new Error('快照格式不兼容');snapshot=data;const hash=decodeURIComponent(location.hash.slice(1));selected=data.runs.some(r=>r.id===selected)?selected:data.runs.some(r=>r.id===hash)?hash:data.current_run;
-      const observed=data.observed_at?new Date(data.observed_at):null;const age=observed?(Date.now()-observed.getTime())/60000:null;
-      $('freshness').textContent=age===null?'观测时间未知':age>90?'快照已超过 90 分钟':'观测快照 · 页面每分钟检查更新';
-      $('snapshot-time').textContent=observed?observed.toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false})+' 北京时间':'—';$('message').textContent='';render();
-    } catch(error) {$('message').textContent='快照读取失败，保留已有画面。'+error.message;}finally{if(id===request)$('refresh').disabled=false;}
+  function runFromHash() {
+    try {return decodeURIComponent(location.hash.slice(1));}
+    catch {return '';}
   }
-  $('refresh').onclick=load;$('run-search').oninput=()=>snapshot&&runList();$('round-filter').onchange=()=>snapshot&&renderRounds(snapshot.runs.find(r=>r.id===selected));window.addEventListener('hashchange',()=>{if(snapshot){const id=decodeURIComponent(location.hash.slice(1));if(snapshot.runs.some(r=>r.id===id)){selected=id;render();}}});
-  load();setInterval(()=>{if(!document.hidden)load();},60000);
+  function resolveRun(data) {
+    const hasRun=id=>data.runs.some(run=>run.id===id);
+    const hash=runFromHash();
+    if (hash==='workspace' && hasRun(selected)) return selected; // Existing skip link.
+    return hasRun(hash)?hash:hasRun(data.current_run)?data.current_run:data.runs[0]?.id;
+  }
+  function selectRun(id) {
+    if (id===selected) return;
+    selected=id;
+    $('round-filter').value='all';
+    render();
+  }
+
+  const record=value=>value!==null && typeof value==='object' && !Array.isArray(value);
+  const string=value=>typeof value==='string';
+  const optionalString=value=>value==null || string(value);
+  const stringList=value=>Array.isArray(value) && value.every(string);
+  const phase=value=>record(value) && record(value.usage);
+  const activity=value=>value==null || (record(value) && record(value.tools) && Object.values(value.tools).every(Number.isFinite));
+  function uniqueList(value,key,check) {
+    return Array.isArray(value) && value.every(check) && new Set(value.map(item=>item[key])).size===value.length;
+  }
+  function validRound(round) {
+    return record(round) && Number.isInteger(round.index) && string(round.status) && optionalString(round.version) &&
+      Array.isArray(round.changes) && round.changes.every(change=>record(change) && string(change.kind) &&
+        optionalString(change.description) && stringList(change.artifacts)) && stringList(round.reasons) &&
+      phase(round.construction) && phase(round.evaluation) && activity(round.activity);
+  }
+  function validRun(run) {
+    return record(run) && string(run.id) && !!run.id && string(run.status) && string(run.phase) &&
+      [run.model,run.commit,run.active_version,run.scope,run.stop_reason,run.acceptance_note].every(optionalString) &&
+      record(run.baseline) && (!run.baseline.reused || phase(run.baseline.historical)) &&
+      record(run.phases) && Object.values(run.phases).every(phase) &&
+      uniqueList(run.rounds,'index',validRound) && activity(run.live_activity) &&
+      stringList(run.maintenance_notes) && record(run.evidence) && optionalString(run.evidence.archive_sha256);
+  }
+  function validSnapshot(data) {
+    return record(data) && data.schema_version===1 && optionalString(data.current_run) &&
+      uniqueList(data.runs,'id',validRun);
+  }
+
+  async function load() {
+    if (pending) return;
+    pending=true;
+    lastCheck=Date.now();
+    const refresh=$('refresh');
+    refresh.setAttribute('aria-disabled','true'); // Keep keyboard focus during a manual or timed refresh.
+    const controller=new AbortController();
+    const timeout=setTimeout(()=>controller.abort(),requestTimeout);
+    try {
+      const response=await fetch('./data/rsi.json',{cache:'no-store',signal:controller.signal});
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data=await response.json();
+      if (!validSnapshot(data)) throw new Error('快照格式不兼容');
+      const signature=JSON.stringify([data.current_run,data.runs]);
+      const next=resolveRun(data);
+      const changed=signature!==runSignature || next!==selected;
+      snapshot=data;
+      runSignature=signature;
+      selected=next;
+      const observed=string(data.observed_at)?Date.parse(data.observed_at):NaN;
+      const age=(Date.now()-observed)/60000;
+      $('freshness').textContent=Number.isNaN(age)?'观测时间未知':age>90?'快照已超过 90 分钟':'观测快照 · 页面每分钟检查更新';
+      $('snapshot-time').textContent=Number.isNaN(observed)?'—':new Date(observed).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false})+' 北京时间';
+      $('message').textContent='';
+      if (changed) render();
+    } catch(error) {
+      $('message').textContent=(snapshot?'快照读取失败，保留已有画面。':'快照读取失败。')+
+        (controller.signal.aborted?'请求超时':error instanceof SyntaxError?'快照格式不兼容':error.message);
+    } finally {
+      clearTimeout(timeout);
+      pending=false;
+      refresh.removeAttribute('aria-disabled');
+    }
+  }
+  $('refresh').onclick=load;
+  $('run-search').oninput=()=>snapshot&&runList();
+  $('round-filter').onchange=()=>snapshot&&renderRounds(snapshot.runs.find(run=>run.id===selected));
+  window.addEventListener('hashchange',()=>{if (snapshot) selectRun(resolveRun(snapshot));});
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden && Date.now()-lastCheck>=pollInterval)load();});
+  load();
+  setInterval(()=>{if(!document.hidden)load();},pollInterval);
 })();

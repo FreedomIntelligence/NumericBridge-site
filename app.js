@@ -1,7 +1,8 @@
 'use strict';
 
 const $ = (id) => document.getElementById(id);
-const controls = ['search', 'task', 'library', 'model', 'hardware', 'comparison-kind'];
+const facetControls = ['task', 'library', 'model', 'hardware', 'comparison-kind'];
+const controls = ['search', ...facetControls];
 const archiveKinds = ['repairs', 'evaluations', 'differences'];
 let archive = null;
 let repairs = [];
@@ -9,7 +10,6 @@ let catalog = [];
 let evaluations = [];
 let differences = [];
 let activeKind = 'repairs';
-let requestSerial = 0;
 let pendingRequest = null;
 const historyAPI = globalThis.PrecisionHistory;
 
@@ -110,7 +110,6 @@ function renderCard(record) {
   const link = node('a', 'permalink', '条目链接 ↗');
   link.href = `#${encodeURIComponent(card.id)}`;
   link.setAttribute('aria-label', `链接至：${text(record.title)}`);
-  link.addEventListener('click', () => { openAncestors(card); card.querySelector('details').open = true; });
   const mobileDate = node('time', 'mobile-date', text(record.date));
   if (/^\d{4}-\d{2}-\d{2}$/.test(record.date)) mobileDate.dateTime = record.date;
   top.append(link, mobileDate);
@@ -342,54 +341,86 @@ function render() {
     $('result-count').textContent = `显示 ${shown.groups} 个库分组 · ${shown.fixes} / ${total.fixes} 项修复 · ${shown.verifications} / ${total.verifications} 轮验证`;
     visible = filtered.length;
   }
-  $('reset').hidden = !controls.some((id) => $(id).value);
   if (visible) $('state').hidden = true;
   else showState(`没有匹配的${pageCopy[activeKind].noun}`, '尝试其他关键词，或清除筛选以查看全部记录。');
 }
+function updateReset() {
+  $('reset').hidden = !controls.some((id) => $(id).value);
+}
 function resetFilters() {
   $('filters').reset();
+  updateReset();
   if (archive) render();
 }
-function selectTab(kind) {
-  if (kind === activeKind) return;
+function selectTab(kind, moveFocus) {
   activeKind = kind;
   $('filters').reset();
+  updateReset();
   configurePage();
+  if (moveFocus) $(`tab-${kind}`).focus({ preventScroll: true });
   load();
 }
-function followHash() {
+function focusRecord(card) {
+  const target = (card.tagName === 'DETAILS' ? card.querySelector(':scope > summary') : card.querySelector('h3, h5')) || card;
+  if (target.tabIndex < 0 && !target.hasAttribute('tabindex')) {
+    target.tabIndex = -1;
+    target.addEventListener('blur', () => target.removeAttribute('tabindex'), { once: true });
+  }
+  target.focus({ preventScroll: true });
+  card.scrollIntoView({ block: 'start' });
+}
+function followHash({ afterLoad = false } = {}) {
   const route = historyAPI.routeForHash(location.hash);
   if (!route) return;
-  if (route.kind !== activeKind) { selectTab(route.kind); return; }
-  if (!archive || !route.id || archiveKinds.includes(route.id)) return;
+  const focused = document.activeElement;
+  const inTabs = Boolean(focused?.closest('[role="tablist"]'));
+  const inHistory = $('history').contains(focused);
+  const onPage = focused === document.body;
+  if (route.kind !== activeKind) {
+    selectTab(route.kind, onPage || inTabs || $('archive-panel').contains(focused));
+    return;
+  }
+  if (!route.id || archiveKinds.includes(route.id)) {
+    if (!afterLoad && (onPage || inTabs || inHistory)) $(`tab-${activeKind}`).focus({ preventScroll: true });
+    return;
+  }
+  if (!archive) return;
   const id = route.id;
   const known = activeKind === 'differences' ? differences.some((record) => `difference-${record.id}` === id) : activeKind === 'evaluations' ? evaluations.some((record) => `evaluation-${record.id}` === id) :
     repairs.some((record) => `repair-${record.id}` === id) || catalog.some((group) =>
       `library-${group.id}` === id || group.fixes.some((fix) => `fix-${fix.root.id}` === id));
   if (!known) return;
-  if (activeKind === 'differences') globalThis.PrecisionDifferences.revealRecord(id);
-  if (!document.getElementById(id)) resetFilters();
-  if (activeKind === 'differences') globalThis.PrecisionDifferences.revealRecord(id);
-  const card = document.getElementById(id);
-  if (card) {
-    openAncestors(card);
-    if (card.tagName === 'DETAILS') card.open = true;
-    else if (card.querySelector('details')) card.querySelector('details').open = true;
-    if (card.classList.contains('evaluation-card')) card.querySelector('.details').open = true;
-    card.scrollIntoView({ block: 'start' });
+  const findRecord = () => {
+    if (activeKind === 'differences') globalThis.PrecisionDifferences.revealRecord(id);
+    return $(id);
+  };
+  const moveFocus = !afterLoad || onPage || inTabs || inHistory;
+  let card = findRecord();
+  if (!card && moveFocus) {
+    resetFilters();
+    card = findRecord();
   }
+  if (!card) return;
+  openAncestors(card);
+  if (card.tagName === 'DETAILS') card.open = true;
+  else if (card.querySelector('details')) card.querySelector('details').open = true;
+  if (card.classList.contains('evaluation-card')) card.querySelector('.details').open = true;
+  // A delayed response must not take focus away from someone already using the page.
+  if (moveFocus) focusRecord(card);
 }
 async function load() {
   pendingRequest?.abort();
-  const serial = ++requestSerial, kind = activeKind, copy = pageCopy[kind];
+  const kind = activeKind, copy = pageCopy[kind];
+  const controller = new AbortController();
+  pendingRequest = controller;
   archive = null;
   $('download').disabled = true;
+  facetControls.forEach((id) => { $(id).disabled = true; });
+  $('history').setAttribute('aria-busy', 'true');
   $('history').replaceChildren();
   ['total-count', 'verification-count', 'group-count', 'updated-at'].forEach((id) => { $(id).textContent = '—'; });
   $('result-count').textContent = `正在读取${copy.noun}档案…`;
   showState('正在加载记录', `准备${copy.noun}指标与验证证据。`);
-  const controller = new AbortController();
-  pendingRequest = controller;
   const timeout = setTimeout(() => controller.abort(), kind === 'differences' ? 45000 : 15000);
   try {
     const [response, contentResponse] = await Promise.all([
@@ -397,10 +428,10 @@ async function load() {
       fetch('./data/content.json', { signal: controller.signal })]);
     if (!response.ok || !contentResponse.ok) throw new Error('HTTP');
     const [data, descriptions] = await Promise.all([response.json(),contentResponse.json()]);
-    const content=Object.fromEntries(descriptions.records.map(entry=>[entry.kind+':'+entry.id,entry.content]));
-    globalThis.PrecisionRepairPresentation.setContent(content);
-    globalThis.EvaluationPresentation.setContent(content);
-    if (serial !== requestSerial) return;
+    if (pendingRequest !== controller) return;
+    const routedKind = historyAPI.routeForHash(location.hash)?.kind;
+    if (routedKind && routedKind !== kind) return;
+    if (controller.signal.aborted) throw new Error('aborted');
     const rows = kind === 'differences' ? data.records : data[kind];
     if (data.schema_version !== 1 || !Array.isArray(rows)) throw new Error('schema');
     const ids = new Set();
@@ -408,6 +439,9 @@ async function load() {
       if (!record || typeof record.id !== 'string' || !record.id.trim() || ids.has(record.id)) throw new Error('id');
       ids.add(record.id);
     }
+    const content = Object.fromEntries(descriptions.records.map((entry) => [entry.kind + ':' + entry.id, entry.content]));
+    globalThis.PrecisionRepairPresentation.setContent(content);
+    globalThis.EvaluationPresentation.setContent(content);
     let options;
     if (kind === 'differences') {
       differences = rows;
@@ -446,20 +480,37 @@ async function load() {
         select.append(option);
       });
     });
-    $('download').disabled = false;
+    updateReset();
     render();
-    followHash();
+    $('download').disabled = false;
+    facetControls.forEach((id) => { $(id).disabled = false; });
+    followHash({ afterLoad: true });
   } catch {
-    if (serial !== requestSerial) return;
+    if (pendingRequest !== controller) return;
+    controller.abort();
     archive = null;
+    $('download').disabled = true;
+    facetControls.forEach((id) => { $(id).disabled = true; });
     $('history').replaceChildren();
     $('result-count').textContent = '档案暂时不可用';
     showState(`暂时无法加载${copy.noun}档案`, '请稍后重试。', true);
-  } finally { clearTimeout(timeout); }
+  } finally {
+    clearTimeout(timeout);
+    if (pendingRequest === controller) {
+      pendingRequest = null;
+      $('history').removeAttribute('aria-busy');
+    }
+  }
 }
 $('filters').addEventListener('submit', (event) => event.preventDefault());
-controls.forEach((id) => $(id).addEventListener(id === 'search' ? 'input' : 'change', () => { if (archive) render(); }));
-$('reset').addEventListener('click', resetFilters);
+controls.forEach((id) => $(id).addEventListener(id === 'search' ? 'input' : 'change', () => {
+  updateReset();
+  if (archive) render();
+}));
+$('reset').addEventListener('click', () => {
+  $('search').focus();
+  resetFilters();
+});
 for (const kind of archiveKinds) $('tab-' + kind).addEventListener('click', () => {
   if (location.hash !== '#' + kind) location.hash = kind;
 });
@@ -474,7 +525,16 @@ document.querySelector('[role="tablist"]').addEventListener('keydown', (event) =
   $('tab-' + kind).focus();
   $('tab-' + kind).click();
 });
-window.addEventListener('hashchange', followHash);
+window.addEventListener('hashchange', () => followHash());
+// Activating the current record's link does not dispatch hashchange.
+$('history').addEventListener('click', (event) => {
+  if (event.defaultPrevented || event.button !== 0 || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+  const link = event.target.closest('a[href^="#"]');
+  if (link?.hash && link.hash === location.hash) {
+    event.preventDefault();
+    followHash();
+  }
+}, { capture: true });
 $('download').addEventListener('click', () => {
   if (!archive) return;
   const url = URL.createObjectURL(new Blob([JSON.stringify(archive, null, 2)], { type: 'application/json;charset=utf-8' }));

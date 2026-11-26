@@ -153,15 +153,227 @@
 <noscript>可直接下载 <a href="./data/paper-results.json">JSON</a>、<a href="./data/paper-results.csv">CSV</a> 或 。</noscript>
 <script>
 'use strict';
-const $=id=>document.getElementById(id); let data,filtered=[],page=0;const size=80;
+const $=id=>document.getElementById(id);
+const size=80, query=$('query'), study=$('study'), status=$('status');
+const rows=$('rows'), previous=$('previous'), next=$('next'), filteredDownload=$('filtered-download');
+const dialog=$('preview'), closePreview=$('close-preview');
+let data, sourcesById, fieldsBySource, filtered=[], page=0;
+let pendingQuery=query.value.toLowerCase(), appliedQuery, appliedStudy, filterTimer, composing=false;
+let previewTrigger, loading=false, retry;
+
 function element(tag,text,cls){const el=document.createElement(tag);if(text!==undefined)el.textContent=text;if(cls)el.className=cls;return el;}
 function download(name,text,type){const url=URL.createObjectURL(new Blob([text],{type}));const a=element('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),10000);}
-function preview(title,content){$('preview-title').textContent=title;$('preview-content').textContent=content;$('preview').showModal();}
 function csv(rows){const keys=['source_id','pointer','value','unit','kind'];const escape=v=>'"'+String(v).replaceAll('"','""')+'"';return '\uFEFF'+[keys,...rows.map(r=>keys.map(k=>r[k]))].map(row=>row.map(escape).join(',')).join('\r\n');}
-function render(){const start=page*size;$('rows').replaceChildren();for(const r of filtered.slice(start,start+size)){const tr=element('tr');tr.append(element('td',r.source_id),element('td',r.pointer,'path'),element('td',String(r.value),'value'),element('td',r.unit));const td=element('td');const button=element('button','查看');button.onclick=()=>{const source=data.sources.find(s=>s.id===r.source_id);let v=source.data;const parts=r.pointer.split('/').slice(1,-1);for(const p of parts)v=v[p.replaceAll('~1','/').replaceAll('~0','~')];preview(r.source_id+' · '+r.pointer,JSON.stringify(v,null,2));};td.append(button);tr.append(td);$('rows').append(tr);}$('status').textContent=filtered.length.toLocaleString()+' 个匹配字段 · 每页 '+size+' 个';$('page-number').textContent=(filtered.length?page+1:0)+' / '+Math.ceil(filtered.length/size);$('previous').disabled=page===0;$('next').disabled=start+size>=filtered.length;$('filtered-download').disabled=!filtered.length;}
-function filter(){const q=$('query').value.toLowerCase();const study=$('study').value;filtered=data.numeric_fields.filter(r=>(!study||r.source_id===study)&&(!q||(r.source_id+' '+r.pointer+' '+r.value).toLowerCase().includes(q)));page=0;render();}
-$('previous').onclick=()=>{page--;render();};$('next').onclick=()=>{page++;render();};$('filtered-download').onclick=()=>download('paper-results-filtered.csv',csv(filtered),'text/csv');$('close-preview').onclick=()=>$('preview').close();
-fetch('./data/paper-results.json').then(r=>{if(!r.ok)throw Error('HTTP '+r.status);return r.json();}).then(d=>{data=d;$('source-count').textContent=d.sources.length;$('field-count').textContent=d.numeric_fields.length.toLocaleString();$('report-count').textContent=d.assets.filter(a=>a.kind==='report').length;$('figure-count').textContent=d.assets.filter(a=>a.kind==='figure').length;for(const h of d.highlights){const card=element('article',undefined,'card');card.append(element('h3',h.title),element('strong',String(h.value)+' '+h.unit),element('p',h.scope));const button=element('button','定位来源');button.onclick=()=>{$('study').value=h.source_id;$('query').value=h.pointer;filter();$('study').scrollIntoView({behavior:'smooth'});};card.append(button);$('highlights').append(card);}for(const note of d.notes)$('notes').append(element('li',note));for(const s of d.sources){const option=element('option',s.title);option.value=s.id;$('study').append(option);const card=element('article',undefined,'card');card.append(element('h3',s.title),element('p','ID: '+s.id),element('p','Source SHA-256: '+s.source_sha256),element('p','Public JSON SHA-256: '+s.export_sha256));const view=element('button','查看来源');view.onclick=()=>preview(s.title,JSON.stringify(s.data,null,2));const save=element('button','下载 JSON 语义副本');save.onclick=()=>download(s.id+'.json',JSON.stringify(s.data,null,2)+'\n','application/json');card.append(view,save);$('source-cards').append(card);}for(const a of d.assets){const card=element('article',undefined,'card');card.append(element('h3',a.file.split('/').pop()));if(a.kind==='portable_supplement'||a.kind==='local_archive'){card.append(element('p',a.scope),element('p','原始证据本地保留，不提供在线下载'),element('p','SHA-256: '+a.source_sha256));$('reports').append(card);continue;}if(a.kind==='figure'){card.classList.add('figure');const img=element('img');img.alt=a.file;img.loading='lazy';img.src=URL.createObjectURL(new Blob([a.svg],{type:'image/svg+xml'}));card.append(img);}else{const view=element('button','阅读报告');view.onclick=()=>preview(a.file,a.text);card.append(view);}const save=element('button','下载');save.onclick=()=>download(a.file.split('/').pop(),a.text||a.svg,a.kind==='figure'?'image/svg+xml':'text/markdown');card.append(save);$(a.kind==='figure'?'figures':'reports').append(card);}$('study').onchange=filter;let timer;$('query').oninput=()=>{clearTimeout(timer);timer=setTimeout(filter,150);};filter();}).catch(e=>{$('status').textContent='载入失败：'+e.message+'。请使用 HTTP 服务打开页面或直接下载 JSON / CSV。';});
+
+function preview(title,content,trigger){
+  previewTrigger=trigger;
+  $('preview-title').textContent=title;
+  $('preview-content').textContent=content;
+  dialog.showModal();
+  closePreview.focus({preventScroll:true});
+}
+dialog.setAttribute('aria-labelledby','preview-title');
+closePreview.onclick=()=>dialog.close();
+dialog.addEventListener('close',()=>{
+  if(dialog.open||!previewTrigger)return;
+  const active=document.activeElement;
+  if(active===document.body||dialog.contains(active)){
+    (previewTrigger.isConnected?previewTrigger:query).focus();
+  }
+  previewTrigger=null;
+});
+
+function render(){
+  const start=page*size;
+  const fragment=document.createDocumentFragment();
+  for(const r of filtered.slice(start,start+size)){
+    const tr=element('tr');
+    tr.append(element('td',r.source_id),element('td',r.pointer,'path'),element('td',String(r.value),'value'),element('td',r.unit));
+    const td=element('td'), button=element('button','查看');
+    button.onclick=()=>{
+      let v=sourcesById.get(r.source_id).data;
+      const parts=r.pointer.split('/').slice(1,-1);
+      for(const p of parts)v=v[p.replaceAll('~1','/').replaceAll('~0','~')];
+      preview(r.source_id+' · '+r.pointer,JSON.stringify(v,null,2),button);
+    };
+    td.append(button);
+    tr.append(td);
+    fragment.append(tr);
+  }
+  rows.replaceChildren(fragment);
+  status.textContent=filtered.length.toLocaleString()+' 个匹配字段 · 每页 '+size+' 个';
+  $('page-number').textContent=(filtered.length?page+1:0)+' / '+Math.ceil(filtered.length/size);
+  previous.disabled=page===0;
+  next.disabled=start+size>=filtered.length;
+  filteredDownload.disabled=!filtered.length;
+}
+
+function sourceFields(id){
+  if(!id)return data.numeric_fields;
+  if(!fieldsBySource){
+    fieldsBySource=new Map();
+    for(const row of data.numeric_fields){
+      if(!fieldsBySource.has(row.source_id))fieldsBySource.set(row.source_id,[]);
+      fieldsBySource.get(row.source_id).push(row);
+    }
+  }
+  return fieldsBySource.get(id)||[];
+}
+function applyFilters(resetPage=false){
+  clearTimeout(filterTimer);
+  if(!data)return false;
+  const id=study.value, q=pendingQuery;
+  const changed=id!==appliedStudy||q!==appliedQuery;
+  if(!changed&&(!resetPage||page===0))return false;
+  if(changed){
+    // A refinement can only match a subset of the existing results. Clearing
+    // the query uses the original rows directly, without copying the full index.
+    const candidates=id===appliedStudy&&q.startsWith(appliedQuery)?filtered:sourceFields(id);
+    filtered=q?candidates.filter(r=>(r.source_id+' '+r.pointer+' '+r.value).toLowerCase().includes(q)):candidates;
+    appliedQuery=q;
+    appliedStudy=id;
+  }
+  page=0;
+  render();
+  return changed;
+}
+function queueQuery(){
+  pendingQuery=query.value.toLowerCase();
+  clearTimeout(filterTimer);
+  if(data)filterTimer=setTimeout(applyFilters,150);
+}
+query.addEventListener('compositionstart',()=>{
+  composing=true;
+  clearTimeout(filterTimer);
+});
+query.addEventListener('compositionend',()=>{
+  composing=false;
+  queueQuery();
+});
+query.addEventListener('input',event=>{if(!composing&&!event.isComposing)queueQuery();});
+study.onchange=()=>applyFilters();
+
+function changePage(delta,button,other){
+  const hadFocus=document.activeElement===button;
+  if(!applyFilters()){
+    const destination=page+delta;
+    if(destination<0||destination*size>=filtered.length)return;
+    page=destination;
+    render();
+  }
+  if(hadFocus&&button.disabled)(other.disabled?query:other).focus({preventScroll:true});
+}
+previous.onclick=()=>changePage(-1,previous,next);
+next.onclick=()=>changePage(1,next,previous);
+filteredDownload.onclick=()=>{
+  const hadFocus=document.activeElement===filteredDownload;
+  applyFilters();
+  if(filtered.length)download('paper-results-filtered.csv',csv(filtered),'text/csv');
+  else if(hadFocus)query.focus({preventScroll:true});
+};
+
+function populate(d){
+  // Stage the dynamic catalog before inserting it, so a failed attempt doesn't
+  // leave partially populated sections behind when the reader retries.
+  const sections=Object.fromEntries(['highlights','notes','study','source-cards','reports','figures']
+    .map(id=>[id,document.createDocumentFragment()]));
+  for(const h of d.highlights){
+    const card=element('article',undefined,'card');
+    card.append(element('h3',h.title),element('strong',String(h.value)+' '+h.unit),element('p',h.scope));
+    const button=element('button','定位来源');
+    button.onclick=()=>{
+      study.value=h.source_id;
+      query.value=h.pointer;
+      pendingQuery=query.value.toLowerCase();
+      applyFilters(true);
+      study.scrollIntoView({behavior:'smooth'});
+    };
+    card.append(button);
+    sections.highlights.append(card);
+  }
+  for(const note of d.notes)sections.notes.append(element('li',note));
+  for(const s of d.sources){
+    const option=element('option',s.title);
+    option.value=s.id;
+    sections.study.append(option);
+    const card=element('article',undefined,'card');
+    card.append(element('h3',s.title),element('p','ID: '+s.id),element('p','Source SHA-256: '+s.source_sha256),element('p','Public JSON SHA-256: '+s.export_sha256));
+    const view=element('button','查看来源');
+    view.onclick=()=>preview(s.title,JSON.stringify(s.data,null,2),view);
+    const save=element('button','下载 JSON 语义副本');
+    save.onclick=()=>download(s.id+'.json',JSON.stringify(s.data,null,2)+'\n','application/json');
+    card.append(view,save);
+    sections['source-cards'].append(card);
+  }
+  for(const a of d.assets){
+    const card=element('article',undefined,'card');
+    card.append(element('h3',a.file.split('/').pop()));
+    if(a.kind==='portable_supplement'||a.kind==='local_archive'){
+      card.append(element('p',a.scope),element('p','原始证据本地保留，不提供在线下载'),element('p','SHA-256: '+a.source_sha256));
+      sections.reports.append(card);
+      continue;
+    }
+    if(a.kind==='figure'){
+      card.classList.add('figure');
+      const img=element('img');
+      img.alt=a.file;
+      img.loading='lazy';
+      img.src=URL.createObjectURL(new Blob([a.svg],{type:'image/svg+xml'}));
+      card.append(img);
+    }else{
+      const view=element('button','阅读报告');
+      view.onclick=()=>preview(a.file,a.text,view);
+      card.append(view);
+    }
+    const save=element('button','下载');
+    save.onclick=()=>download(a.file.split('/').pop(),a.text||a.svg,a.kind==='figure'?'image/svg+xml':'text/markdown');
+    card.append(save);
+    sections[a.kind==='figure'?'figures':'reports'].append(card);
+  }
+  for(const [id,fragment] of Object.entries(sections)){
+    if(id==='study')study.replaceChildren(study.options[0],fragment);
+    else $(id).replaceChildren(fragment);
+  }
+  $('source-count').textContent=d.sources.length;
+  $('field-count').textContent=d.numeric_fields.length.toLocaleString();
+  $('report-count').textContent=d.assets.filter(a=>a.kind==='report').length;
+  $('figure-count').textContent=d.assets.filter(a=>a.kind==='figure').length;
+}
+
+const loadingText=status.textContent;
+async function loadIndex(isRetry=false){
+  if(loading)return;
+  loading=true;
+  if(retry)retry.setAttribute('aria-disabled','true');
+  status.textContent=loadingText;
+  try{
+    const response=await fetch('./data/paper-results.json',isRetry?{cache:'reload'}:undefined);
+    if(!response.ok)throw Error('HTTP '+response.status);
+    const index=await response.json();
+    if(!index||!['sources','numeric_fields','highlights','notes','assets'].every(key=>Array.isArray(index[key])))throw Error('结果索引格式无效');
+    sourcesById=new Map(index.sources.map(s=>[s.id,s]));
+    populate(index);
+    data=index;
+    if(!composing)pendingQuery=query.value.toLowerCase();
+    applyFilters();
+    const retryHadFocus=retry&&document.activeElement===retry;
+    retry?.remove();
+    retry=null;
+    if(retryHadFocus)query.focus();
+  }catch(e){
+    data=fieldsBySource=appliedQuery=appliedStudy=undefined;
+    status.textContent='载入失败：'+e.message+'。请使用 HTTP 服务打开页面或直接下载 JSON / CSV。';
+    if(!retry){
+      retry=element('button','重试');
+      retry.onclick=()=>loadIndex(true);
+      status.after(retry);
+    }
+    retry.removeAttribute('aria-disabled');
+  }finally{
+    loading=false;
+  }
+}
+loadIndex();
 </script>
 </body>
 </html>

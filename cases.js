@@ -18,7 +18,7 @@
     return acknowledgmentRequest ||= fetch('./data/acknowledgments.json').then(response=>{
       if(!response.ok)throw new Error('Acknowledgments unavailable');
       return response.json();
-    }).then(data=>data.entries);
+    }).then(data=>data.entries).catch(error=>{acknowledgmentRequest=null;throw error;});
   }
   const creditName = ({mode,name}) => mode==='github'&&/^@[a-z\d]+(?:-[a-z\d]+)*$/i.test(name)
     ? `<a class="link" href="https://github.com/${encodeURIComponent(name.slice(1))}">${esc(name)}</a>` : esc(name);
@@ -280,6 +280,8 @@
   const reportLink=(c,kind,id,filters={},issue='',solution='')=>{
     const params=new URLSearchParams({[kind]:id});
     for(const field of configurationFields)if(filters[field])params.set(field,filters[field]);
+    if(filters.allowAlternatives)params.set('alternatives','1');
+    if(filters.showingExample)params.set('example','1');
     if(issue)params.set('issue',issue);
     if(solution)params.set('solution',solution);
     return `#/report/${encodeURIComponent(c.row.id)}?${params}`;
@@ -348,27 +350,39 @@
         [task,unique(configs.filter(c => c.tasks.includes(task)).flatMap(c => c.frameworks))]))
     };
   }
-  async function mount(root, hash, options={}) {
+  async function mount(root, hash, options={}, retry=false) {
     const tx=(zh,en)=>options.lang==='en'?en:zh;
     const icon=name=>`<svg class="ico" aria-hidden="true"><use href="#nf-i-${name}"/></svg>`;
     root._lifecycleCleanup?.();
-    const stamp={};root._lifecycleRequest=stamp;
+    const stamp={},mountHash=location.hash,returnFocus=root._caseReturnFocus;
+    root._caseReturnFocus=null;
+    root._lifecycleRequest=stamp;
+    const active=()=>root._lifecycleRequest===stamp&&!root.hidden;
+    const mounting=()=>active()&&location.hash===mountHash;
     root._lifecycleCleanup=()=>{root._lifecycleRequest=null;};
     root.innerHTML=`<div class="wrap lc-loading" role="status">${tx('正在读取案例…','Loading cases…')}</div>`;
-    let index, acknowledgments;
-    try {[index,acknowledgments]=await Promise.all([loadIndex(),loadAcknowledgments().catch(()=>[])]);} catch(error) {
-      if(root._lifecycleRequest!==stamp)return;
+    let index,acknowledgments=[],refreshCredits;
+    loadAcknowledgments().then(entries=>{
+      if(active()&&Array.isArray(entries)){acknowledgments=entries;refreshCredits?.();}
+    }).catch(()=>{});
+    try {index=await loadIndex();} catch(error) {
+      if(!mounting())return;
       root.innerHTML=`<div class="wrap lc-error" role="alert"><h1>${tx('案例库暂时无法读取','Case library unavailable')}</h1><p>${esc(error.message)}</p><button class="btn" data-retry>${tx('重试','Retry')}</button></div>`;
-      root.querySelector('[data-retry]').onclick=()=>mount(root,hash,options);return;
+      const button=root.querySelector('[data-retry]');
+      button.onclick=()=>mount(root,hash,options,true);
+      if(retry&&document.activeElement===document.body)button.focus({preventScroll:true});
+      return;
     }
-    if(root._lifecycleRequest!==stamp)return;
+    if(!mounting())return;
     const state=Object.fromEntries(configurationFields.map(k=>[k,hash.q.get(k)||'']));
     try{Object.assign(state,Search.normalizeRequest(Object.fromEntries(configurationFields.map(k=>[k,state[k]])),index.search));delete state.query;}
     catch(error){root.innerHTML=`<div class="wrap lc-error"><h1>${tx('请核对检索条件','Check the search request')}</h1><p>${esc(error.message)}</p><a href="#/cases">${tx('清除条件重新选择','Clear filters and choose again')}</a></div>`;return;}
     state.q='';
     let allowAlternatives=hash.q.get('alternatives')==='1';
     state.hardwareMode='platform';
-    let selected=hash.arg||hash.q.get('id')||'',selectedIssue=hash.q.get('issue')||'';
+    const requested=hash.arg||hash.q.get('id')||'',requestedIssue=hash.q.get('issue')||'';
+    let selected='',selectedIssue='',selectedSolutionId='';
+    let caseReturn=requested?history.state?.numericBridgeCaseReturn:null;
     if(!state.library)state.version='';
     const get=(kind,id)=>index.records.get(key(kind,id));
     const description=(kind,row)=>Search.describe(index,kind,row.id,options.lang||'zh',
@@ -400,7 +414,7 @@
         .map(lib=>({hardware:config.platforms[0],model:config.model,model_size:'',library:canonical('library',lib.name),version:lib.version||'',task:config.tasks[0]||''})))
       .find(request=>recommendConfiguration(index,request));
     let showingExample=!!example&&hash.q.get('example')==='1'&&configurationFields.every(field=>state[field]===example[field]);
-    if(example&&!selected&&!hash.q.size){Object.assign(state,example);showingExample=true;}
+    if(example&&!requested&&!hash.q.size){Object.assign(state,example);showingExample=true;}
     const labels={hardware:tx('硬件平台','Hardware'),model:tx('模型','Model'),model_size:tx('参数量','Parameter count'),library:tx('框架','Framework'),task:tx('任务','Task'),version:tx('框架版本','Framework version')};
     const selectorKeys=['hardware','model','library','version'];
     const frameworkGroups=[['sft',tx('训练','Training')],['inference',tx('推理','Inference')],['rl','RL']];
@@ -415,7 +429,7 @@
     }
     const requestedVersion=value=>libraryVersion({version:value})||tx('指定版本','Selected version');
     root.innerHTML=`<div class="wrap lc-page">
-      <header class="lc-intro"><h1 class="work-title"><span class="work-title-mark">${icon('book')}</span><span>${tx('精度案例库','Precision Case Library')}</span></h1><a class="link" href="#/records">${tx('查看全部记录','Browse all records')} <span aria-hidden="true">→</span></a></header>
+      <header class="lc-intro"><h1 class="work-title" tabindex="-1"><span class="work-title-mark">${icon('book')}</span><span>${tx('精度案例库','Precision Case Library')}</span></h1><a class="link" href="#/records">${tx('查看全部记录','Browse all records')} <span aria-hidden="true">→</span></a></header>
       <div class="lc-discovery"><aside class="lc-demand" aria-label="${tx('目标配置','Target configuration')}"><div class="lc-demand-head"><h2>${icon('sliders')}${tx('目标配置','Target configuration')}</h2><button type="button" class="btn sm ghost" data-reset>${icon('cycle')}${tx('重置','Reset')}</button></div><div class="lc-selectors"></div></aside>
       <section class="lc-results" aria-label="${tx('配置结果','Configuration results')}"><section class="lc-recommendation" aria-live="polite"></section><section class="lc-problems"><h2>${tx('相关问题','Related issues')}</h2><div class="lc-list"></div></section><section class="lc-problems" data-model-records hidden></section></section></div>
       <dialog class="lc-option-dialog" aria-labelledby="lc-option-title"><div class="lc-modal-bar"><h2 id="lc-option-title"></h2><button type="button" class="iconbtn" data-options-close aria-label="${tx('关闭选项','Close options')}">×</button></div><div class="lc-option-body"><label class="lc-option-search"><svg class="lc-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg><span class="sr">${tx('搜索选项','Search options')}</span><input type="search" data-options-search placeholder="${tx('搜索或输入名称','Search or enter a name')}"></label><div class="lc-option-grid" data-options-list></div></div></dialog>
@@ -430,21 +444,58 @@
         fitPreviewChoices(target);
       }
     });
-    let cleanup=false,lastTrigger=null,activeField='',optionTrigger=null;
+    let lastTrigger=null,activeField='',optionReturn=null,detailHash='',closingDetail=false,copyAttempt;
+    const heading=root.querySelector('.lc-intro h1');
     const updateLock=()=>document.body.classList.toggle('locked',dialog.open||optionDialog.open);
-    root._lifecycleCleanup=()=>{cleanup=true;previewResize.disconnect();root._lifecycleRequest=null;if(optionDialog.open)optionDialog.close();if(dialog.open)dialog.close();updateLock();};
-    document.fonts.ready.then(()=>{if(!cleanup)root.querySelectorAll('[data-preview-rows]').forEach(fitPreviewChoices);});
-    const closeDetail=()=>{if(dialog.open)dialog.close();};
-    dialog.addEventListener('close',()=>{if(cleanup)return;updateLock();selected='';selectedIssue='';writeURL();list.querySelectorAll('[data-case]').forEach(b=>b.setAttribute('aria-expanded','false'));if(lastTrigger?.isConnected)lastTrigger.focus({preventScroll:true});});
-    root.querySelector('[data-detail-close]').onclick=closeDetail;
+    const caseButtons=()=>[...root.querySelectorAll('[data-case]')];
+    const matchingButtons=(id,issue)=>caseButtons().filter(button=>button.dataset.case===id&&(button.dataset.issue||'')===issue);
+    const focusVisible=(element,preventScroll=true)=>{
+      if(!element?.isConnected||!element.getClientRects().length)return false;
+      element.focus({preventScroll});
+      return document.activeElement===element;
+    };
+    const focusCaseReturn=({id,issue,ordinal},trigger)=>{
+      const matches=matchingButtons(id,issue),opener=matches[ordinal??0];
+      // A list remount can re-collapse the group that contained the opener.
+      const group=ordinal!=null&&opener?.closest('details:not([open])');
+      if(group)group.open=true;
+      if(!focusVisible(trigger)&&!focusVisible(opener,ordinal==null)&&!matches.some(button=>focusVisible(button)))focusVisible(heading);
+    };
+    root._lifecycleCleanup=()=>{
+      if(!active())return;
+      if(caseReturn?.hash===location.hash)root._caseReturnFocus=caseReturn;
+      previewResize.disconnect();root._lifecycleRequest=null;
+      if(optionDialog.open)optionDialog.close();if(dialog.open)dialog.close();updateLock();
+    };
+    document.fonts.ready.then(()=>{if(active())root.querySelectorAll('[data-preview-rows]').forEach(fitPreviewChoices);});
+    dialog.addEventListener('close',()=>{
+      if(!active()||dialog.open)return;
+      updateLock();
+      if(location.hash!==detailHash)return;
+      copyAttempt=null;refreshCredits=null;
+      list.querySelectorAll('[data-case]').forEach(b=>b.setAttribute('aria-expanded','false'));
+      focusCaseReturn({id:selected,issue:selectedIssue},lastTrigger);
+      // A locally opened detail has a real list entry immediately behind it.
+      // Shared links do not: closing one must never send the visitor away.
+      if(caseReturn){closingDetail=true;history.back();return;}
+      selected=selectedIssue=selectedSolutionId='';writeURL();
+    });
+    root.querySelector('[data-detail-close]').onclick=()=>dialog.close();
     const copyLink=dialog.querySelector('[data-copy]');
-    copyLink.onclick=async()=>{try{await navigator.clipboard.writeText(location.href);copyLink.textContent=tx('已复制','Copied');}catch(_){copyLink.textContent=tx('请复制地址栏链接','Copy the address-bar URL');}};
+    const resetCopy=()=>{copyAttempt=null;copyLink.textContent=tx('复制链接','Copy link');};
+    copyLink.onclick=async()=>{
+      const attempt=copyAttempt={},url=location.href;
+      let text;
+      try{await navigator.clipboard.writeText(url);text=tx('已复制','Copied');}
+      catch(_){text=tx('请复制地址栏链接','Copy the address-bar URL');}
+      if(active()&&dialog.open&&attempt===copyAttempt&&location.href===url)copyLink.textContent=text;
+    };
     root.querySelector('[data-options-close]').onclick=()=>optionDialog.close();
     optionDialog.addEventListener('close',()=>{
-      if(cleanup||optionDialog.open)return;
+      if(!active()||optionDialog.open)return;
       updateLock();
-      if(optionTrigger?.isConnected)optionTrigger.focus({preventScroll:true});else focusChoice(activeField);
-      optionTrigger=null;
+      const restore=optionReturn;optionReturn=null;
+      if(restore&&!focusVisible(restore.trigger))focusChoice(restore.field);
     });
     for(const modal of [dialog,optionDialog])modal.addEventListener('click',event=>{const rect=modal.getBoundingClientRect();if(event.target===modal&&(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom))modal.close();});
     function valuesFor(field) {
@@ -614,7 +665,8 @@
       for(const field of selectorKeys)paintChoices(field);
     }
     function openOptions(field,trigger=null) {
-      optionTrigger=trigger;
+      if(optionDialog.open)return;
+      optionReturn={trigger,field};
       activeField=field;optionDialog.dataset.field=field;root.querySelector('#lc-option-title').textContent=labels[field];
       root.querySelector('[data-options-search]').value='';paintChoices(field,true);
       optionDialog.showModal();updateLock();root.querySelector('[data-options-search]').focus({preventScroll:true});
@@ -632,24 +684,32 @@
         root.querySelector(`.lc-selectors [data-selector-more="${field}"]:not([hidden])`)||
         (field==='library'&&(root.querySelector(`.lc-selectors [data-framework-toggle="${state.task}"]:not([hidden])`)||
           root.querySelector('.lc-selectors [data-framework-toggle]:not([hidden])')))||choices[0];
-      button?.focus({preventScroll:true});
+      if(!focusVisible(button))focusVisible(root.querySelector('[data-reset]'));
     }
     function choose(field,value,task='') {
       const request=Object.fromEntries(configurationFields.map(k=>[k,state[k]]));request[field]=value;
       if(field==='library'){request.task=task;request.version='';}
       if(field==='model')request.model_size='';
       try{const normalized=Search.normalizeRequest(request,index.search);for(const k of configurationFields)state[k]=normalized[k];}
-      catch(error){root.querySelector('[data-options-list]').innerHTML=`<p class="lc-error">${esc(error.message)}</p>`;return;}
+      catch(error){
+        root.querySelector('[data-options-list]').innerHTML=`<p class="lc-error" role="alert">${esc(error.message)}</p>`;
+        if(optionDialog.open)root.querySelector('[data-options-search]').focus({preventScroll:true});
+        return;
+      }
       allowAlternatives=false;showingExample=false;
-      if(optionDialog.open)optionDialog.close();selected='';render();focusChoice(field);
+      if(optionDialog.open){optionReturn=null;optionDialog.close();updateLock();}
+      render();focusChoice(field);
     }
-    function writeURL() {
+    function writeURL(push=false) {
       const query=new URLSearchParams();
       for(const [k,v] of Object.entries(state))if(v||k==='category')query.set(k,v);
       if(allowAlternatives)query.set('alternatives','1');
       if(showingExample)query.set('example','1');
       if(selected&&selectedIssue)query.set('issue',selectedIssue);
-      history.replaceState(null,'','#/cases'+(selected?'/'+encodeURIComponent(selected):'')+'?'+query.toString());
+      if(selected&&selectedSolutionId)query.set('solution',selectedSolutionId);
+      const url='#/cases'+(selected?'/'+encodeURIComponent(selected):'')+'?'+query.toString();
+      history[push?'pushState':'replaceState']({...history.state,numericBridgeCaseReturn:caseReturn||null},'',url);
+      if(selected)detailHash=location.hash;
     }
     function solutionAction({solution_type:type,target}) {
       const version=libraryVersion(target),library=[target.library,version].filter(Boolean).join(' ');
@@ -674,9 +734,10 @@
       };
       return `<figure class="lc-metric"><figcaption>${esc(label)}${unit?` <small>${esc(unit)}</small>`:''}</figcaption>${point(before,'before',tx('基线','Baseline'))}${point(after,'after',tx('本方案','This option'))}</figure>`;
     }
-    function showCase(c,issueId='') {
+    function showCase(c,issueId='',solutionId='') {
       if(!c) {detail.innerHTML=`<div class="lc-empty"><h2>${tx('没有匹配案例','No matching cases')}</h2><p>${tx('调整筛选条件，或切换分类查看其他记录。','Adjust the filters or select another category.')}</p></div>`;return;}
       const {row,entries}=c,d=row.details;
+      const reportFilters={...state,allowAlternatives,showingExample};
       const recommendation=recommendConfiguration(index,{...state,allowAlternatives});
       const filters=recommendation?{...state,version:recommendation.library.version||''}:state;
       const focused=issueSolutions(index,c,filters,issueId);
@@ -698,7 +759,9 @@
         });
       }).sort((a,b)=>Number(b.record.id===focused?.config?.recordId)-Number(a.record.id===focused?.config?.recordId));
       const environmentLabel=config=>[config.platforms.join(' / ')||config.hardware,config.model,...config.tasks.map(taskLabel)].filter(Boolean).join(' · ');
-      let selectedSolution=solutionRows.find(s=>s.id===hash.q.get('solution'))||solutionRows[0],groups=[],pending=bindings.length>0;
+      const requestedSolution=solutionRows.find(s=>s.id===solutionId);
+      selectedSolutionId=requestedSolution?.id||'';
+      let selectedSolution=requestedSolution||solutionRows[0],groups=[],pending=bindings.length>0;
       let failedVerifications=new Set();
       const solutionDetails=new Map(solutionRows.map(solution=>{
         const sd=solution.details,copy=description('candidate',solution),action=solutionAction(sd);
@@ -718,8 +781,11 @@
         const status=checks.some(v=>failedVerifications.has(v.id))?tx('部分实测结果暂不可用','Some measured results are unavailable'):
           !results?(checks.length&&pending?tx('正在读取结果…','Loading results…'):
             outcomes.has('not-runtime-tested')?verificationLabels['not-runtime-tested']:tx('暂无实测指标','No measured metrics available')):'';
-        const reports=checks.map((check,i)=>`<a class="link" href="${esc(reportLink(c,'verification',check.id,state,issueId,solution.id))}">${tx('查看复验报告','View verification report')}${checks.length>1?` ${i+1}`:''} ↗</a>`).join('');
-        return `<div class="lc-solution-head"><h4 id="lc-selected-solution">${esc(title)}</h4>${reports}</div>${results}${status?`<p class="lc-solution-action" role="status">${status}</p>`:''}`;
+        const reports=checks.map((check,i)=>`<a class="link" href="${esc(reportLink(c,'verification',check.id,reportFilters,issueId,solution.id))}">${tx('查看复验报告','View verification report')}${checks.length>1?` ${i+1}`:''} ↗</a>`).join('');
+        return {
+          header:`<div class="lc-solution-head"><h4 id="lc-selected-solution">${esc(title)}</h4>${reports}</div>`,
+          evidence:results+(status?`<p class="lc-solution-action" role="status">${status}</p>`:'')
+        };
       };
       const choices=solutionRows.length?`<div class="lc-solution-choices" role="group" aria-label="${tx('修复方案','Fix options')}">${solutionRows.map(solution=>{
         const {title,summary,outcomes}=solutionDetails.get(solution.id);
@@ -727,37 +793,44 @@
         const content=heading+(summary?`<span class="lc-solution-summary">${esc(summary)}</span>`:'');
         return solutionRows.length>1?`<button type="button" class="lc-solution-choice" aria-controls="lc-solution-result" aria-pressed="${solution===selectedSolution}" data-pick-solution="${esc(solution.id)}">${content}</button>`:`<div class="lc-solution-choice">${content}</div>`;
       }).join('')}</div>`:'';
-      const solutionSection=selectedSolution||focused||issues.length?`<section class="lc-section" data-solutions><h3>${tx('方案与结果','Fix options & results')}</h3>${selectedSolution?`${choices}<div id="lc-solution-result" class="lc-solution" role="region" aria-labelledby="lc-selected-solution" data-solution="${esc(selectedSolution.id)}">${renderSolution(selectedSolution)}</div>`:`<p class="lc-muted">${tx('暂无修复方案','No fix option recorded')}</p>`}</section>`:'';
+      const initialSolution=selectedSolution&&renderSolution(selectedSolution);
+      const solutionSection=selectedSolution||focused||issues.length?`<section class="lc-section" data-solutions><h3>${tx('方案与结果','Fix options & results')}</h3>${selectedSolution?`${choices}<div id="lc-solution-result" class="lc-solution" role="region" aria-labelledby="lc-selected-solution" data-solution="${esc(selectedSolution.id)}"${pending?' aria-busy="true"':''}>${initialSolution.header}${initialSolution.evidence}</div>`:`<p class="lc-muted">${tx('暂无修复方案','No fix option recorded')}</p>`}</section>`:'';
       const shownRecords=new Set([focused?.config?.recordId,...effects.map(e=>e.record.id)].filter(Boolean));
       const shownConfigs=focused&&shownRecords.size?c.configurations.filter(config=>config.kind==='repair'&&shownRecords.has(config.recordId)):c.configurations;
       const configurations=shownConfigs.length?`<section class="lc-section lc-configurations"><h3>${tx('测试环境','Test environment')}</h3>${shownConfigs.map(config=>`<div><p>${esc(environmentLabel(config))}</p><ul>${config.libraries.map(lib=>`<li><b>${esc(lib.name)}</b>${libraryVersion(lib)?` <span>${esc(libraryVersion(lib))}</span>`:''}</li>`).join('')}</ul></div>`).join('')}</section>`:'';
       const request=`<dl class="lc-request">${[['hardware',tx('硬件','Hardware')],['model',tx('模型','Model')],['framework',tx('库 / 框架','Library / framework')],['task',tx('任务','Task')]].map(([k,label])=>`<div><dt>${label}</dt><dd>${esc((k==='task'?taskLabel(d.request[k]):d.request[k])??tx('未记录','Not recorded'))}</dd></div>`).join('')}</dl>`;
       const copy=description(focused?'issue':'case',focused?.issue||row);
       const summaries=!focused&&!solutionRows.length&&!issues.length?[...new Set(c.observations.filter(o=>o.kind==='comparison').map(({record})=>description('comparison',record).summary||record.summary).filter(text=>text&&text!==copy.summary))]:[];
-      const comparisonLinks=!focused?c.observations.filter(o=>o.kind==='comparison').map(({record})=>`<li><a class="link" href="${esc(reportLink(c,'comparison',record.id,state))}">${esc(description('comparison',record).title)} ↗</a></li>`).join(''):'';
+      const comparisonLinks=!focused?c.observations.filter(o=>o.kind==='comparison').map(({record})=>`<li><a class="link" href="${esc(reportLink(c,'comparison',record.id,reportFilters))}">${esc(description('comparison',record).title)} ↗</a></li>`).join(''):'';
       const result=summaries.length||comparisonLinks?`<section class="lc-section"><h3>${tx('评测结果','Evaluation results')}</h3>${summaries.map(text=>`<p>${esc(text)}</p>`).join('')}${comparisonLinks?`<ul class="lc-report-links">${comparisonLinks}</ul>`:''}</section>`:'';
       const issueSection=issues.length?`<section class="lc-section"><h3><span>${tx('问题','Issues')}</span></h3>${issues.map(issue=>{
         const text=description('issue',issue),r=resolutionRows.find(row=>row.issue.id===issue.id);
         return `<div class="lc-issue">${r?resolutionBadge(r.resolution):''}<h4>${esc(text.title)}</h4>${text.summary?`<p>${esc(text.summary)}</p>`:''}</div>`;
       }).join('')}</section>`:'';
-      const credits=acknowledgments.filter(row=>row.case_id===c.row.id&&['nickname','github'].includes(row.mode));
-      const thanks=credits.map(row=>`<p class="lc-detail-scope">${tx('感谢','Thanks to')} ${creditName(row)}${tx('：',': ')}${esc(row.contribution[options.lang==='en'?'en':'zh'])}</p>`).join('');
-      detail.innerHTML=`<header class="lc-detail-head"><h2 id="lc-case-title" tabindex="-1">${esc(copy.title)}</h2>${focused?resolutionBadge(focused.resolution):''}</header>${copy.summary?`<p class="lc-detail-scope">${esc(copy.summary)}</p>`:''}${thanks}${issueSection}${solutionSection}${result}${configurations||request}`;
+      const thanks=()=>acknowledgments.filter(row=>row.case_id===c.row.id&&['nickname','github'].includes(row.mode)).map(row=>`<p class="lc-detail-scope">${tx('感谢','Thanks to')} ${creditName(row)}${tx('：',': ')}${esc(row.contribution[options.lang==='en'?'en':'zh'])}</p>`).join('');
+      detail.innerHTML=`<header class="lc-detail-head"><h2 id="lc-case-title" tabindex="-1">${esc(copy.title)}</h2>${focused?resolutionBadge(focused.resolution):''}</header>${copy.summary?`<p class="lc-detail-scope">${esc(copy.summary)}</p>`:''}${thanks()}${issueSection}${solutionSection}${result}${configurations||request}`;
+      const creditAnchor=copy.summary?detail.firstElementChild.nextElementSibling:detail.firstElementChild;
+      refreshCredits=()=>{if(dialog.open&&location.hash===detailHash&&creditAnchor.isConnected)creditAnchor.insertAdjacentHTML('afterend',thanks());};
       const body=detail.querySelector('#lc-solution-result');
-      const refreshSolution=()=>{
-        body.dataset.solution=selectedSolution.id;
-        body.innerHTML=renderSolution(selectedSolution);
-      };
       const buttons=[...detail.querySelectorAll('[data-pick-solution]')];
       for(const button of buttons)button.onclick=()=>{
         if(button.dataset.pickSolution===selectedSolution.id)return;
         selectedSolution=solutionRows.find(solution=>solution.id===button.dataset.pickSolution);
         for(const choice of buttons)choice.setAttribute('aria-pressed',String(choice===button));
-        refreshSolution();
+        const {header,evidence}=renderSolution(selectedSolution);
+        body.dataset.solution=selectedSolutionId=selectedSolution.id;
+        body.innerHTML=header+evidence;
+        resetCopy();writeURL();
       };
       const finishResults=()=>{
         pending=false;
-        if(body.isConnected&&dialog.open&&root._lifecycleRequest===stamp)refreshSolution();
+        if(!active()||!body.isConnected||!dialog.open||location.hash!==detailHash)return;
+        // Keep the existing report links and their focus when evidence arrives.
+        const header=body.firstElementChild;
+        while(header.nextSibling)header.nextSibling.remove();
+        const {evidence}=renderSolution(selectedSolution);
+        header.insertAdjacentHTML('afterend',evidence);
+        body.removeAttribute('aria-busy');
       };
       if(body&&bindings.length)loadSolutionResults().then(async data=>{
         const definitions=data[row.id]||[];
@@ -767,14 +840,19 @@
         finishResults();
       }).catch(()=>{failedVerifications=new Set(bindings.map(({verification})=>verification.id));finishResults();});
     }
-    function openCase(c,trigger,issueId='') {
-      if(!c)return;selected=c.row.id;selectedIssue=trigger?.dataset.issue||issueId;lastTrigger=trigger||null;copyLink.textContent=tx('复制链接','Copy link');showCase(c,selectedIssue);
+    function openCase(c,trigger,issueId='',solutionId='') {
+      if(!c||closingDetail||dialog.open||selected)return;
+      const issue=trigger?.dataset.issue||issueId;
+      selected=c.row.id;selectedIssue=c.entries.some(entry=>entry.kind==='issue'&&entry.id===issue)?issue:'';
+      lastTrigger=trigger||null;
+      if(trigger)caseReturn={hash:location.hash,id:selected,issue:selectedIssue,ordinal:matchingButtons(selected,selectedIssue).indexOf(trigger)};
+      resetCopy();showCase(c,selectedIssue,solutionId);
       const missing=configurationDifferences(c.configurations.find(config=>configurationMatches(config,state))||c.configurations.map(config=>({config,n:configurationDifferences(config,state).length})).sort((a,b)=>a.n-b.n)[0].config,state);
       if(missing.length)detail.insertAdjacentHTML('afterbegin',`<p class="lc-near-warning">${tx('配置差异','Configuration differences')}: ${missing.map(k=>esc(labels[k])).join(' · ')}</p>`);
-      if(!dialog.open)dialog.showModal();updateLock();dialog.scrollTop=0;detail.querySelector('#lc-case-title').focus({preventScroll:true});writeURL();
-      list.querySelectorAll('[data-case]').forEach(b=>b.setAttribute('aria-expanded',String(b.dataset.case===selected&&(!selectedIssue||b.dataset.issue===selectedIssue))));
+      dialog.showModal();updateLock();dialog.scrollTop=0;detail.querySelector('#lc-case-title').focus({preventScroll:true});writeURL(!!trigger);
+      list.querySelectorAll('[data-case]').forEach(b=>b.setAttribute('aria-expanded',String(b.dataset.case===selected&&b.dataset.issue===selectedIssue)));
     }
-    function render() {
+    function render(syncURL=true) {
       refreshSelectors();
       const lookup=retrieve(index,state,{limit:1,allow_alternatives:allowAlternatives});
       const recommendation=recommendConfiguration(index,{...state,allowAlternatives});
@@ -792,9 +870,12 @@
       })():!ready?`<p class="lc-placeholder">${tx('请选择硬件、模型和框架','Select hardware, model and framework')}</p>`:
         lookup.recommendation_gaps.includes('specific-model-required-for-recommendation')?`<button class="btn sm" type="button" data-pick-model>${tx('选择具体型号','Select a specific model')}</button>`:
         `<p class="lc-placeholder">${tx('暂无可推荐组合','No supported recommendation')}</p>`);
-      section.querySelector('[data-pick-model]')?.addEventListener('click',()=>openOptions('model'));
+      section.querySelector('[data-pick-model]')?.addEventListener('click',event=>openOptions('model',event.currentTarget));
       if(!recommendation&&lookup.alternatives.length)section.insertAdjacentHTML('beforeend',`<button class="btn sm" type="button" data-show-alternatives>${tx('查看其他版本','View other versions')}</button>`);
-      section.querySelector('[data-show-alternatives]')?.addEventListener('click',()=>{allowAlternatives=true;render();});
+      section.querySelector('[data-show-alternatives]')?.addEventListener('click',()=>{
+        allowAlternatives=true;render();
+        const target=section.querySelector('h2');target.tabIndex=-1;focusVisible(target);
+      });
       list.innerHTML=issues.map(({issue,case:c,config,libraries,resolution})=>{
         const versions=libraries.map(name=>{const lib=config.libraries.find(lib=>lib.name===name);return [name,lib&&libraryVersion(lib)].filter(Boolean).join(' ');});
         const text=description('issue',issue);
@@ -818,11 +899,17 @@
       const tiny=evaluations.filter(({config})=>config.searchConfig.model_size==='tiny');
       records.innerHTML=evaluations.length?`<h2>${tx('评测记录','Evaluations')} · ${evaluations.length}</h2>${evaluationList(evaluations.filter(({config})=>config.searchConfig.model_size!=='tiny'))}${tiny.length?`<details class="lc-option-group" ${tiny.length===evaluations.length?'open':''}><summary>${display('model_size','tiny')} · ${tiny.length}</summary>${evaluationList(tiny)}</details>`:''}`:'';
       root.querySelectorAll('[data-case]').forEach(button=>button.onclick=()=>openCase(index.cases.find(c=>c.row.id===button.dataset.case),button));
-      writeURL();
+      if(syncURL)writeURL();
     }
-    root.querySelector('[data-reset]').onclick=()=>{for(const k of configurationFields)state[k]='';state.q='';allowAlternatives=false;showingExample=false;selected='';render();};
-    const requested=selected,requestedIssue=selectedIssue;selected='';selectedIssue='';render();
-    if(requested){const c=index.cases.find(c=>c.row.id===requested);if(c)openCase(c,null,requestedIssue);}
+    root.querySelector('[data-reset]').onclick=()=>{for(const k of configurationFields)state[k]='';state.q='';allowAlternatives=false;showingExample=false;render();};
+    render(false);
+    const requestedCase=requested&&index.cases.find(c=>c.row.id===requested);
+    if(requestedCase)openCase(requestedCase,null,requestedIssue,hash.q.get('solution'));
+    else {
+      caseReturn=null;writeURL();
+      if(returnFocus?.hash===mountHash)focusCaseReturn(returnFocus);
+      else if(retry&&document.activeElement===document.body)focusVisible(heading);
+    }
   }
 
   async function mountReport(root,hash,{lang='zh',copyLink}={}) {
@@ -830,7 +917,7 @@
     const request={};root._reportRequest=request;
     const active=()=>root._reportRequest===request&&!root.hidden;
     const backParams=new URLSearchParams();
-    for(const field of [...configurationFields,'issue','solution'])if(hash.q.get(field))backParams.set(field,hash.q.get(field));
+    for(const field of [...configurationFields,'alternatives','example','issue','solution'])if(hash.q.get(field))backParams.set(field,hash.q.get(field));
     const back=hash.arg?`#/cases/${encodeURIComponent(hash.arg)}${backParams.size?'?'+backParams:''}`:'#/cases';
     const backLink=`<a class="link" href="${esc(back)}">← ${tx('返回案例','Back to case')}</a>`;
     const paint=html=>{if(active())root.innerHTML=`<article class="wrap lc-report">${backLink}${html}</article>`;};
