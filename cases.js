@@ -413,14 +413,16 @@
     const catalogCases=index.cases.filter(c=>c.category!=='workflow-benchmark');
     const configs=catalogCases.flatMap(c=>c.configurations);
     const canonical=(field,value)=>index.search.aliases[field]?.[choiceKey(value)]||value;
-    const example=index.search.cases.flatMap(c=>c.configurations.filter(config=>config.recommendations.length))
+    const defaultFramework=canonical('library','vLLM');
+    const resetFilters=()=>{for(const field of configurationFields)state[field]='';state.library=defaultFramework;};
+    const example=hash.q.get('example')==='1'&&index.search.cases.flatMap(c=>c.configurations.filter(config=>config.recommendations.length))
       .sort((a,b)=>(b.date||'').localeCompare(a.date||'')||a.id.localeCompare(b.id))
       .flatMap(config=>config.libraries.filter(lib=>config.frameworks.includes(canonical('library',lib.name))&&
         config.recommendations.some(support=>!support.library_keys||support.library_keys.some(k=>lib.keys.includes(k))))
         .map(lib=>({hardware:config.platforms[0],model:config.model,model_size:'',library:canonical('library',lib.name),version:lib.version||'',task:config.tasks[0]||''})))
       .find(request=>recommendConfiguration(index,request));
     let showingExample=!!example&&hash.q.get('example')==='1'&&configurationFields.every(field=>state[field]===example[field]);
-    if(example&&!requested&&!hash.q.size){Object.assign(state,example);showingExample=true;}
+    if(!requested&&!hash.q.size)resetFilters();
     const labels={hardware:tx('硬件平台','Hardware'),model:tx('模型','Model'),model_size:tx('参数量','Parameter count'),library:tx('框架','Framework'),task:tx('任务','Task'),version:tx('框架版本','Framework version')};
     const selectorKeys=['hardware','model','library','version'];
     const frameworkGroups=[['sft',tx('训练','Training')],['inference',tx('推理','Inference')],['rl','RL']];
@@ -437,7 +439,7 @@
     root.innerHTML=`<div class="wrap lc-page">
       <header class="lc-intro"><h1 class="work-title" tabindex="-1"><span class="work-title-mark">${icon('book')}</span><span>${tx('精度案例库','Precision Case Library')}</span></h1><a class="link" href="#/records">${tx('查看全部记录','Browse all records')} <span aria-hidden="true">→</span></a></header>
       <div class="lc-discovery"><aside class="lc-demand" aria-label="${tx('目标配置','Target configuration')}"><div class="lc-demand-head"><h2>${icon('sliders')}${tx('目标配置','Target configuration')}</h2><button type="button" class="btn sm ghost" data-reset>${icon('cycle')}${tx('重置','Reset')}</button></div><div class="lc-selectors"></div></aside>
-      <section class="lc-results" aria-label="${tx('配置结果','Configuration results')}"><section class="lc-recommendation" aria-live="polite"></section><section class="lc-problems"><h2>${tx('相关问题','Related issues')}</h2><div class="lc-list"></div></section><section class="lc-problems" data-model-records hidden></section></section></div>
+      <section class="lc-results" aria-label="${tx('配置结果','Configuration results')}"><section class="lc-recommendation" aria-live="polite"></section><div class="lc-results-grid"><section class="lc-problems" data-model-records></section><section class="lc-problems lc-related"><h2>${tx('相关问题','Related issues')}</h2><div class="lc-list"></div></section></div></section></div>
       <dialog class="lc-option-dialog" aria-labelledby="lc-option-title"><div class="lc-modal-bar"><h2 id="lc-option-title"></h2><button type="button" class="iconbtn" data-options-close aria-label="${tx('关闭选项','Close options')}">×</button></div><div class="lc-option-body"><label class="lc-option-search"><svg class="lc-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg><span class="sr">${tx('搜索选项','Search options')}</span><input type="search" data-options-search placeholder="${tx('搜索或输入名称','Search or enter a name')}"></label><div class="lc-option-grid" data-options-list></div></div></dialog>
       <dialog class="lc-case-dialog" aria-labelledby="lc-case-title"><div class="lc-modal-bar"><span>${tx('案例详情','Case detail')}</span><div class="lc-detail-actions"><button class="btn sm" type="button" data-copy>${tx('复制链接','Copy link')}</button><button type="button" class="iconbtn" data-detail-close aria-label="${tx('关闭案例详情','Close case detail')}">×</button></div></div><article class="lc-detail" id="lc-detail"></article></dialog></div>`;
     const list=root.querySelector('.lc-list'),detail=root.querySelector('.lc-detail'),dialog=root.querySelector('.lc-case-dialog'),optionDialog=root.querySelector('.lc-option-dialog');
@@ -708,7 +710,8 @@
     }
     function writeURL(push=false) {
       const query=new URLSearchParams();
-      for(const [k,v] of Object.entries(state))if(v||k==='category')query.set(k,v);
+      for(const [k,v] of Object.entries(state))if(k!=='hardwareMode'&&(v||k==='category'))query.set(k,v);
+      if(!query.size&&!state.library)query.set('library','');
       if(allowAlternatives)query.set('alternatives','1');
       if(showingExample)query.set('example','1');
       if(selected&&selectedIssue)query.set('issue',selectedIssue);
@@ -859,7 +862,11 @@
       dialog.showModal();updateLock();dialog.scrollTop=0;detail.querySelector('#lc-case-title').focus({preventScroll:true});writeURL(!!trigger);
       list.querySelectorAll('[data-case]').forEach(b=>b.setAttribute('aria-expanded',String(b.dataset.case===selected&&b.dataset.issue===selectedIssue)));
     }
+    const evaluationsPerPage=8;
+    let evaluationLimit=evaluationsPerPage,evaluationFilter='';
     function render(syncURL=true) {
+      const filterKey=JSON.stringify(configurationFields.map(field=>state[field]));
+      if(filterKey!==evaluationFilter){evaluationFilter=filterKey;evaluationLimit=evaluationsPerPage;}
       refreshSelectors();
       const lookup=retrieve(index,state,{limit:1,allow_alternatives:allowAlternatives});
       const recommendation=recommendConfiguration(index,{...state,allowAlternatives});
@@ -874,7 +881,7 @@
           ${recommendation.differences.includes('version')?`<p class="lc-version-change">${version&&version!==requested?`${tx('版本调整','Version change')}: ${esc(requested)} → ${esc(version)}`:tx('已显示其他版本的记录','Showing records for a different version')}</p>`:''}
           <dl class="lc-recommend-config"><div><dt>${icon('chip')}${tx('硬件','Hardware')}</dt><dd title="${esc(config.hardware)}">${esc(state.hardware)}</dd></div><div><dt>${icon('layers')}${tx('实测模型','Tested model')}</dt><dd>${esc(config.model)}</dd></div><div><dt>${icon('target')}${tx('任务','Task')}</dt><dd>${esc(taskLabel(state.task||config.tasks[0]||tx('未记录','Not recorded')))}</dd></div></dl>
           <section class="lc-stack" aria-label="${tx('库版本搭配','Library version combination')}"><h4>${tx('库版本搭配','Library version combination')}</h4><dl class="lc-recommend-config">${config.libraries.map(lib=>`<div><dt>${esc(lib.name)}</dt><dd>${esc(libraryVersion(lib)||'—')}</dd></div>`).join('')}</dl></section>`;
-      })():!ready?`<p class="lc-placeholder">${tx('请选择硬件、模型和框架','Select hardware, model and framework')}</p>`:
+      })():!ready?`<p class="lc-placeholder">${tx('下方可浏览当前筛选条件下的实测记录。要获取具体推荐，请指定硬件、模型和框架。','Browse measured results for the current filters below. For a specific recommendation, select hardware, model and framework.')}</p>`:
         lookup.recommendation_gaps.includes('specific-model-required-for-recommendation')?`<button class="btn sm" type="button" data-pick-model>${tx('选择具体型号','Select a specific model')}</button>`:
         `<p class="lc-placeholder">${tx('暂无可推荐组合','No supported recommendation')}</p>`);
       section.querySelector('[data-pick-model]')?.addEventListener('click',event=>openOptions('model',event.currentTarget));
@@ -889,26 +896,31 @@
         const note=resolutionNote(resolution);
         const meta=[config.model,...(versions.length?versions:[state.library]),note].filter(Boolean).map(esc).join(' · ');
         return `<button class="lc-problem" type="button" data-case="${esc(c.row.id)}" data-issue="${esc(issue.id)}" aria-haspopup="dialog" aria-expanded="false"><strong>${esc(text.title)}</strong><span class="lc-problem-meta">${meta}</span>${resolutionBadge(resolution)}<span class="lc-row-arrow" title="${tx('查看详情','View details')}">${icon('arrow')}</span></button>`;
-      }).join('')||`<p class="lc-placeholder">${ready?tx('暂无问题记录','No issue recorded'):tx('选择配置后查看','Select a configuration')}</p>`;
+      }).join('')||`<p class="lc-placeholder">${ready?tx('暂无匹配的问题记录','No matching issue records'):tx('指定硬件、模型和框架后查看对应问题。','Select hardware, model and framework to see issues for that configuration.')}</p>`;
       const records=root.querySelector('[data-model-records]');
-      const evaluations=state.model?filterCases(index,state).filter(c=>c.category!=='workflow-benchmark').flatMap(c=>{
+      const evaluations=filterCases(index,state).filter(c=>c.category!=='workflow-benchmark').flatMap(c=>{
         const matches=new Map();
         for(const config of c.configurations){
           if(config.kind==='comparison'&&configurationMatches(config,state))matches.set(config.recordId,config);
         }
         return [...matches.values()].map(config=>({c,config,record:get('comparison',config.recordId)}));
-      }).sort(compareEvaluations):[];
-      records.hidden=!evaluations.length;
+      }).sort(compareEvaluations);
       const evaluationList=items=>items.length?`<ul class="lc-evaluation-links">${items.map(({c,config,record})=>{
         const size=config.searchConfig.model_size;
         return `<li><button class="link" type="button" data-case="${esc(c.row.id)}" aria-haspopup="dialog">${esc(description('comparison',record).title)}</button><span>${esc(config.model)}${['tiny','unknown'].includes(size)||choiceKey(config.model).includes(choiceKey(size))?'':' · '+esc(display('model_size',size))}</span><a class="link" href="${esc(reportLink(c,'comparison',record.id,state))}">${tx('实测报告','Measured report')} ↗</a></li>`;
       }).join('')}</ul>`:'';
       const tiny=evaluations.filter(({config})=>config.searchConfig.model_size==='tiny');
-      records.innerHTML=evaluations.length?`<h2>${tx('评测记录','Evaluations')} · ${evaluations.length}</h2>${evaluationList(evaluations.filter(({config})=>config.searchConfig.model_size!=='tiny'))}${tiny.length?`<details class="lc-option-group" ${tiny.length===evaluations.length?'open':''}><summary>${display('model_size','tiny')} · ${tiny.length}</summary>${evaluationList(tiny)}</details>`:''}`:'';
+      const primary=evaluations.filter(({config})=>config.searchConfig.model_size!=='tiny');
+      records.innerHTML=`<h2>${tx('评测记录','Evaluations')} <span class="lc-count">${evaluations.length}</span></h2>${evaluationList(primary.slice(0,evaluationLimit))}${primary.length>evaluationLimit?`<button class="btn sm" type="button" data-more-evaluations>${tx('显示更多评测','Show more evaluations')} · ${primary.length-evaluationLimit}</button>`:''}${tiny.length?`<details class="lc-option-group" ${!primary.length?'open':''}><summary>${display('model_size','tiny')} · ${tiny.length}</summary>${evaluationList(tiny)}</details>`:''}${!evaluations.length?`<p class="lc-compact-empty">${tx('暂无符合当前条件的评测记录。','No evaluation records match these filters.')}</p>`:''}`;
+      records.querySelector('[data-more-evaluations]')?.addEventListener('click',()=>{
+        const previousLimit=evaluationLimit;
+        evaluationLimit+=evaluationsPerPage;render(false);
+        focusVisible(records.querySelectorAll(':scope > .lc-evaluation-links button')[previousLimit]);
+      });
       root.querySelectorAll('[data-case]').forEach(button=>button.onclick=()=>openCase(index.cases.find(c=>c.row.id===button.dataset.case),button));
       if(syncURL)writeURL();
     }
-    root.querySelector('[data-reset]').onclick=()=>{for(const k of configurationFields)state[k]='';state.q='';allowAlternatives=false;showingExample=false;render();};
+    root.querySelector('[data-reset]').onclick=()=>{resetFilters();state.q='';allowAlternatives=false;showingExample=false;render();};
     render(false);
     const requestedCase=requested&&index.cases.find(c=>c.row.id===requested);
     if(requestedCase)openCase(requestedCase,null,requestedIssue,hash.q.get('solution'));

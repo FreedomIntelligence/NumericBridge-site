@@ -50,7 +50,20 @@
 #v-cases .lc-option-group{border-top:1px solid var(--hair);margin-top:16px;padding-top:14px}
 #v-cases .lc-option-group h3{font-size:12px;font-weight:600;line-height:1.4;margin:0 0 8px;color:var(--ink)}
 #v-cases .lc-evaluation-links{list-style:none;padding:0;margin:0}
-#v-cases .lc-evaluation-links li{padding:10px 0;border-bottom:1px solid var(--hair);display:grid;gap:4px;overflow-wrap:anywhere}
+#v-cases .lc-evaluation-links li{padding:10px 0;border-bottom:1px solid var(--hair);display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 12px;align-items:center;overflow-wrap:anywhere}
+#v-cases .lc-evaluation-links li>span{grid-column:1}
+#v-cases .lc-evaluation-links li>a{grid-column:2;grid-row:1 / span 2;font-size:12px;white-space:nowrap}
+#v-cases [data-more-evaluations]{margin-top:12px}
+#v-cases .lc-count{color:var(--muted);font-size:11px;border:1px solid var(--line);border-radius:100px;padding:1px 7px}
+#v-cases .lc-compact-empty,#v-cases .lc-related .lc-placeholder{padding:10px 12px;font-size:12px;color:var(--muted);margin:0}
+#v-cases .lc-results-grid{display:grid;gap:0 24px}
+#v-cases .lc-results-grid>section{min-width:0}
+@media(min-width:1180px){
+  #v-cases .lc-results-grid{grid-template-columns:minmax(0,1fr) minmax(230px,.4fr);align-items:start}
+  #v-cases .lc-related .lc-problem{grid-template-columns:minmax(0,1fr) 20px;grid-template-areas:'title action' 'meta action' 'status action';gap:3px 6px}
+  #v-cases .lc-related .lc-resolution{justify-self:start}
+}
+@media(max-width:540px){#v-cases .lc-evaluation-links li{grid-template-columns:minmax(0,1fr)}#v-cases .lc-evaluation-links li>a{grid-column:1;grid-row:auto;justify-self:start}}
 #v-cases .lc-evaluation-links button{text-align:left;justify-self:start}
 #v-cases .lc-evaluation-links span{color:var(--muted);font-size:11px}
 #v-cases .lc-option-grid .lc-choice:focus-visible{outline:2px solid var(--ink);outline-offset:1px}
@@ -153,8 +166,6 @@
 @media(prefers-color-scheme:dark){:root:not([data-theme="light"]) #v-cases{--metric-before:#99a5b9;--metric-after:#4ac1b6}}
 #v-cases .lc-warning{border-left:2px solid var(--t3);padding-left:10px;margin-top:12px;color:var(--t3)}
 #v-cases .lc-report-links{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:8px}
-#v-cases .lc-evaluation-links li{flex-wrap:wrap}
-#v-cases .lc-evaluation-links li>a{margin-inline-start:auto}
 #v-report .lc-report{max-width:1060px;padding-block:28px 56px;overflow-wrap:anywhere}
 #v-report .lc-report-head{margin-block:18px 0}
 #v-report .lc-report-head h1{font-size:28px;font-weight:650;line-height:1.35;letter-spacing:0;margin:5px 0}

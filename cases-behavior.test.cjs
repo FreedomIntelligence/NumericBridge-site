@@ -1,13 +1,10 @@
 'use strict';
 
 // Opt in with NUMERICBRIDGE_PREVIEW_URL and an installed Playwright/Chromium.
-// CASES_BASELINE_REF enables the additional rollback DOM comparison.
 const assert = require('node:assert/strict');
-const { execFileSync } = require('node:child_process');
 const { after, before, describe, test } = require('node:test');
 
 const preview = process.env.NUMERICBRIDGE_PREVIEW_URL;
-const baseline = process.env.CASES_BASELINE_REF;
 const root = '#v-cases';
 const detail = '.lc-case-dialog[open]';
 const options = '.lc-option-dialog[open]';
@@ -118,7 +115,7 @@ describe('public cases interactions', { skip: !preview && 'Set NUMERICBRIDGE_PRE
 
   test('Back/Forward restores case detail and its opener; explicit close and Escape return to the list', async t => {
     const page = await pageFor(t);
-    await visitCases(page);
+    await visitCases(page, '?' + new URLSearchParams(exampleParams));
     const listHash = hash(page);
     const historyLength = await page.evaluate(() => history.length);
     await openCase(page);
@@ -260,7 +257,7 @@ describe('public cases interactions', { skip: !preview && 'Set NUMERICBRIDGE_PRE
       { case_id: id, mode: 'nickname', name: 'Test credit', contribution: { zh: '测试署名', en: 'Test attribution' } }
     ] } });
     t.after(held.release);
-    await visitCases(page);
+    await visitCases(page, '?' + new URLSearchParams(exampleParams));
     await openCase(page);
     await held.arrived;
     assert.equal(await page.getByText('Test credit', { exact: false }).count(), 0);
@@ -277,26 +274,26 @@ describe('public cases interactions', { skip: !preview && 'Set NUMERICBRIDGE_PRE
     await focused(page, root + ' .lc-intro h1');
   });
 
-  test('default markup matches the shipping baseline except heading focusability', { skip: !baseline }, async t => {
-    const oldPage = await pageFor(t), newPage = await pageFor(t);
-    const oldScript = execFileSync('git', ['show', baseline + ':cases.js'], { cwd: __dirname, encoding: 'utf8' });
-    await oldPage.route('**/cases.js*', route => route.fulfill({ contentType: 'text/javascript', body: oldScript }));
-    const snapshot = async page => {
-      await visitCases(page);
-      return page.evaluate(async () => {
-        await document.fonts.ready;
-        await new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)));
-        const copy = document.querySelector('#v-cases').cloneNode(true);
-        copy.querySelector('.lc-intro h1').removeAttribute('tabindex');
-        return copy.innerHTML;
-      });
-    };
-    for (const width of [1280, 390]) {
-      await Promise.all([oldPage, newPage].map(page => page.setViewportSize({ width, height: 900 })));
-      // A fresh fragment route on each page compares freshly generated markup.
-      await Promise.all([oldPage, newPage].map(page => page.goto(new URL('#/records', preview).href)));
-      const [oldMarkup, newMarkup] = await Promise.all([snapshot(oldPage), snapshot(newPage)]);
-      assert.equal(newMarkup, oldMarkup, 'resting DOM at viewport width ' + width);
-    }
+  test('starts with vLLM only, shows paginated evaluations first, and can reset', async t => {
+    const page = await pageFor(t);
+    await page.setViewportSize({width: 1280, height: 900});
+    await visitCases(page);
+    const records = page.locator('[data-model-records]');
+    const issues = page.locator('.lc-related');
+    const rows = records.locator(':scope > .lc-evaluation-links > li');
+    assert.deepEqual([...params(page)], [['library', 'vLLM']]);
+    assert.equal(await rows.count(), 8);
+    assert.ok((await records.boundingBox()).x < (await issues.boundingBox()).x);
+    await page.locator('[data-more-evaluations]').press('Enter');
+    assert.ok(await rows.count() > 8);
+    assert.ok(await rows.nth(8).getByRole('button').evaluate(button => button === document.activeElement));
+    await page.setViewportSize({width:390, height:850});
+    assert.ok((await records.boundingBox()).y < (await issues.boundingBox()).y);
+    await visitCases(page, '?' + new URLSearchParams(exampleParams));
+    await page.locator('[data-reset]').press('Enter');
+    assert.deepEqual([...params(page)], [['library', 'vLLM']]);
+    assert.equal(await rows.count(), 8);
+    await visitCases(page, '?library=');
+    assert.deepEqual([...params(page)], [['library', '']]);
   });
 });
