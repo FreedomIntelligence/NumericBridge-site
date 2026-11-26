@@ -4536,7 +4536,7 @@ RENDER.upstream = function renderUpstream(h) {
       <dl class="home-stats up-stats">
         <div class="home-stat"><dt>${tx("已合并 PR", "Merged PRs")}</dt><dd id="uMergedStat" class="home-stat-value${c.merged ? "" : " muted"}">${fmtInt(c.merged)}</dd></div>
         <div class="home-stat"><dt>${tx("审核中", "Under review")}</dt><dd id="uReviewStat" class="home-stat-value${c.merged ? " muted" : ""}">${fmtInt(c.review)}</dd></div>
-        <div class="home-stat"><dt>${tx("上游项目", "Projects")}</dt><dd class="home-stat-value muted">${fmtInt(UPSTREAM.projects.length)}</dd><dd class="home-stat-note">${esc(UPSTREAM.projects.join(" · ") || "—")}</dd></div>
+        <div class="home-stat"><dt>${tx("上游项目", "Projects")}</dt><dd class="home-stat-value muted">${fmtInt(UPSTREAM.projects.length)}</dd></div>
       </dl>
       <div class="cmp-filters">
         <div class="cmp-filter"><h2 id="uStatusLabel">${ico("sliders")}${tx("状态", "Status")}</h2><div class="pills" id="uStatus" role="group" aria-labelledby="uStatusLabel">${statuses.map(([val, label, n]) => `<button class="pill" type="button" data-us="${val}" aria-pressed="false">${esc(label)}<span class="n">${fmtInt(n)}</span></button>`).join("")}</div></div>
