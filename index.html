@@ -205,7 +205,11 @@ br.d{display:inline}
 .home-mcp-panel p{color:var(--muted);font-size:13px;line-height:1.65}
 .home-mcp-address{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 10px;background:var(--wash);border:1px solid var(--line);border-radius:6px}
 .home-mcp-address code{flex:1 1 190px;min-width:0;font:12px/1.5 var(--mono);overflow-wrap:anywhere}
-.home-mcp-panel>.link{align-self:flex-start;margin-top:auto}
+.home-mcp-entry{display:grid;gap:8px;align-content:start}
+.home-mcp-entry+.home-mcp-entry{border-top:1px solid var(--line);padding-top:14px}
+.home-mcp-entry h3{font-size:14px;font-weight:600}
+.home-mcp-entry p code{overflow-wrap:anywhere}
+.home-mcp-entry>.link{justify-self:start}
 @media(max-width:800px){.home-resources{grid-template-columns:minmax(0,1fr)}}
 .home-coverage-status{margin-top:4px;color:var(--muted);font-size:13px}
 .home-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:18px 24px}
@@ -2533,6 +2537,7 @@ function homeResultsHtml() {
       ${note ? `<dd class="home-stat-note">${esc(note)}</dd>` : ""}</div>`).join("")}</dl></section>`;
 }
 const MCP_ENDPOINT = "https://numericbridge.com/mcp";
+const MCP_CONTRIBUTION = "python -B -m community.mcp_submission";
 RENDER[""] = function renderHome() {
   const view = byId("v-home");
   if (view.firstElementChild) return;
@@ -2567,10 +2572,20 @@ RENDER[""] = function renderHome() {
       <section id="homeMcp" aria-labelledby="homeMcpTitle">
         <h2 class="home-section-title" id="homeMcpTitle">${tx("MCP 接入", "MCP access")}</h2>
         <div class="panel home-mcp-panel">
-          <p>${tx("在支持 MCP 的客户端中检索公开精度案例、评测结果和修复证据。", "Search public precision cases, evaluation results, and repair evidence from an MCP client.")}</p>
-          <div class="home-mcp-address"><code dir="ltr">${esc(MCP_ENDPOINT)}</code><button id="homeMcpCopy" class="btn sm" type="button" aria-label="${tx("复制 MCP 地址", "Copy MCP endpoint URL")}">${tx("复制地址", "Copy URL")}</button></div>
-          <p>${tx("Streamable HTTP · 只读 · 无需令牌", "Streamable HTTP · Read-only · No token required")}</p>
-          <a class="link" href="https://github.com/FreedomIntelligence/NumericBridge/blob/main/community/README.md#mcp-search">${tx("查看接入指南", "View setup guide")} <span aria-hidden="true">→</span></a>
+          <section class="home-mcp-entry" aria-labelledby="homeMcpSearchTitle">
+            <h3 id="homeMcpSearchTitle">${tx("检索 MCP", "Search MCP")}</h3>
+            <p>${tx("检索公开精度案例、评测结果和修复证据。", "Search public precision cases, evaluations, and repair evidence.")}</p>
+            <div class="home-mcp-address"><code dir="ltr">${esc(MCP_ENDPOINT)}</code><button id="homeMcpCopy" class="btn sm" type="button" aria-label="${tx("复制检索 MCP 地址", "Copy search MCP endpoint URL")}">${tx("复制地址", "Copy URL")}</button></div>
+            <p>${tx("远程 Streamable HTTP · 只读 · 无需令牌", "Remote Streamable HTTP · Read-only · No token required")}</p>
+            <a class="link" href="https://github.com/FreedomIntelligence/NumericBridge/blob/main/community/README.md#mcp-search">${tx("检索接入指南", "Search setup guide")} <span aria-hidden="true">→</span></a>
+          </section>
+          <section class="home-mcp-entry" aria-labelledby="homeMcpContributionTitle">
+            <h3 id="homeMcpContributionTitle">${tx("提交 MCP", "Contribution MCP")}</h3>
+            <p>${tx("在本地客户端准备并预览投稿，确认后再提交审核。", "Prepare and preview a draft in your local client, then confirm to submit it for review.")}</p>
+            <div class="home-mcp-address"><code dir="ltr">${esc(MCP_CONTRIBUTION)}</code><button id="homeMcpContributionCopy" class="btn sm" type="button" aria-label="${tx("复制提交 MCP 启动命令", "Copy contribution MCP launch command")}">${tx("复制命令", "Copy command")}</button></div>
+            <p>${tx("本地 stdio · 匿名投稿的 HTTP 接收路径：", "Local stdio · HTTP intake path for anonymous drafts: ")}<code>/v1/public-submissions</code></p>
+            <a class="link" href="https://github.com/FreedomIntelligence/NumericBridge/blob/main/community/README.md#configure-agent-contribution">${tx("提交接入指南", "Contribution setup guide")} <span aria-hidden="true">→</span></a>
+          </section>
         </div>
       </section>
     </section>
@@ -2579,6 +2594,7 @@ RENDER[""] = function renderHome() {
   renderHomeCoverage(byId("homeCoverageList"));
   renderCite();
   byId("homeMcpCopy").onclick = e => copyText(MCP_ENDPOINT, e.currentTarget);
+  byId("homeMcpContributionCopy").onclick = e => copyText(MCP_CONTRIBUTION, e.currentTarget);
 };
 const SW = { kind: "", task: "" };
 const HERO_BAR_LABELS = {
