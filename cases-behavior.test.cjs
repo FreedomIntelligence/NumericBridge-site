@@ -159,7 +159,7 @@ describe('public cases interactions', { skip: !preview && 'Set NUMERICBRIDGE_PRE
   test('evaluation history stays newest first without displaying dates in the case lists', async t => {
     const page = await pageFor(t);
     await visitCases(page, '?' + new URLSearchParams({ model: 'google/gemma-4-12B' }));
-    const rows = page.locator('[data-model-records] > .lc-evaluation-links > li');
+    const rows = page.locator('[data-model-records] .lc-evaluation-links > li');
     await rows.first().waitFor();
     const evaluations = await page.evaluate(async () => (await window.NumericBridgeCatalog.load('./data/evaluations.json')).document.evaluations);
     const dates = new Map(evaluations.map(row => [row.id, row.date]));
@@ -274,25 +274,44 @@ describe('public cases interactions', { skip: !preview && 'Set NUMERICBRIDGE_PRE
     await focused(page, root + ' .lc-intro h1');
   });
 
-  test('starts with vLLM only, shows paginated evaluations first, and can reset', async t => {
+  test('vLLM is highlighted without a task filter, and records page below issues', async t => {
     const page = await pageFor(t);
-    await page.setViewportSize({width: 1280, height: 900});
+    await page.setViewportSize({width:1280,height:900});
     await visitCases(page);
     const records = page.locator('[data-model-records]');
     const issues = page.locator('.lc-related');
-    const rows = records.locator(':scope > .lc-evaluation-links > li');
+    const rows = records.locator('.lc-evaluation-links > li');
+    const pane = records.locator('.lc-evaluation-page');
+    const prev = records.locator('[data-evaluation-page="prev"]');
+    const next = records.locator('[data-evaluation-page="next"]');
+    const picked = page.locator('[data-choices="library"] [data-value="vLLM"][data-task="inference"]');
     assert.deepEqual([...params(page)], [['library', 'vLLM']]);
+    assert.equal(await picked.getAttribute('aria-pressed'), 'true');
+    await picked.waitFor({state:'visible'});
     assert.equal(await rows.count(), 8);
-    assert.ok((await records.boundingBox()).x < (await issues.boundingBox()).x);
-    await page.locator('[data-more-evaluations]').press('Enter');
-    assert.ok(await rows.count() > 8);
-    assert.ok(await rows.nth(8).getByRole('button').evaluate(button => button === document.activeElement));
-    await page.setViewportSize({width:390, height:850});
-    assert.ok((await records.boundingBox()).y < (await issues.boundingBox()).y);
-    await visitCases(page, '?' + new URLSearchParams(exampleParams));
+    assert.ok((await issues.boundingBox()).y < (await records.boundingBox()).y);
+    assert.ok(await prev.isDisabled());
+    const firstPage = await rows.allTextContents();
+    const height = (await pane.boundingBox()).height;
+    await next.press('Enter');
+    assert.ok(await rows.count() <= 8);
+    assert.notDeepEqual(await rows.allTextContents(), firstPage);
+    assert.equal((await pane.boundingBox()).height, height);
+    assert.ok(await prev.isEnabled());
+    const secondPage = await rows.allTextContents();
+    await rows.first().getByRole('button').press('Enter');
+    await focused(page, '#lc-case-title');
+    await page.goBack();
+    await page.locator(detail).waitFor({state:'detached'});
+    assert.deepEqual(await rows.allTextContents(), secondPage);
+    await prev.press('Enter');
+    assert.deepEqual(await rows.allTextContents(), firstPage);
+    await page.setViewportSize({width:390,height:850});
+    assert.ok((await issues.boundingBox()).y < (await records.boundingBox()).y);
+    await next.press('Enter');
     await page.locator('[data-reset]').press('Enter');
     assert.deepEqual([...params(page)], [['library', 'vLLM']]);
-    assert.equal(await rows.count(), 8);
+    assert.deepEqual(await rows.allTextContents(), firstPage);
     await visitCases(page, '?library=');
     assert.deepEqual([...params(page)], [['library', '']]);
   });

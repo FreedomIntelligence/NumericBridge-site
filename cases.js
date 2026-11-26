@@ -439,7 +439,7 @@
     root.innerHTML=`<div class="wrap lc-page">
       <header class="lc-intro"><h1 class="work-title" tabindex="-1"><span class="work-title-mark">${icon('book')}</span><span>${tx('精度案例库','Precision Case Library')}</span></h1><a class="link" href="#/records">${tx('查看全部记录','Browse all records')} <span aria-hidden="true">→</span></a></header>
       <div class="lc-discovery"><aside class="lc-demand" aria-label="${tx('目标配置','Target configuration')}"><div class="lc-demand-head"><h2>${icon('sliders')}${tx('目标配置','Target configuration')}</h2><button type="button" class="btn sm ghost" data-reset>${icon('cycle')}${tx('重置','Reset')}</button></div><div class="lc-selectors"></div></aside>
-      <section class="lc-results" aria-label="${tx('配置结果','Configuration results')}"><section class="lc-recommendation" aria-live="polite"></section><div class="lc-results-grid"><section class="lc-problems" data-model-records></section><section class="lc-problems lc-related"><h2>${tx('相关问题','Related issues')}</h2><div class="lc-list"></div></section></div></section></div>
+      <section class="lc-results" aria-label="${tx('配置结果','Configuration results')}"><section class="lc-recommendation" aria-live="polite"></section><section class="lc-problems lc-related"><h2>${tx('相关问题','Related issues')}</h2><div class="lc-list"></div></section><section class="lc-problems" data-model-records></section></section></div>
       <dialog class="lc-option-dialog" aria-labelledby="lc-option-title"><div class="lc-modal-bar"><h2 id="lc-option-title"></h2><button type="button" class="iconbtn" data-options-close aria-label="${tx('关闭选项','Close options')}">×</button></div><div class="lc-option-body"><label class="lc-option-search"><svg class="lc-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg><span class="sr">${tx('搜索选项','Search options')}</span><input type="search" data-options-search placeholder="${tx('搜索或输入名称','Search or enter a name')}"></label><div class="lc-option-grid" data-options-list></div></div></dialog>
       <dialog class="lc-case-dialog" aria-labelledby="lc-case-title"><div class="lc-modal-bar"><span>${tx('案例详情','Case detail')}</span><div class="lc-detail-actions"><button class="btn sm" type="button" data-copy>${tx('复制链接','Copy link')}</button><button type="button" class="iconbtn" data-detail-close aria-label="${tx('关闭案例详情','Close case detail')}">×</button></div></div><article class="lc-detail" id="lc-detail"></article></dialog></div>`;
     const list=root.querySelector('.lc-list'),detail=root.querySelector('.lc-detail'),dialog=root.querySelector('.lc-case-dialog'),optionDialog=root.querySelector('.lc-option-dialog');
@@ -567,7 +567,7 @@
     }
     function paintFrameworks(box,query,expanded) {
       const term=choiceKey(query),alias=choiceKey(canonical('library',query));
-      const choice=(task,library,label=library)=>`<button class="pill lc-choice" type="button" data-choose-field="library" data-task="${task}" data-value="${esc(library)}" aria-pressed="${state.task===task&&state.library===library}"><span>${esc(label)}</span></button>`;
+      const choice=(task,library,label=library)=>`<button class="pill lc-choice" type="button" data-choose-field="library" data-task="${task}" data-value="${esc(library)}" aria-pressed="${state.library===library&&(state.task===task||(!state.task&&!!library))}"><span>${esc(label)}</span></button>`;
       const matches=list=>list.filter(name=>!term||choiceKey(name)===alias||choiceKey(name).includes(term));
       const groups=frameworkGroups.map(([task,label])=>{
         const names=matches((expanded?frameworkCatalog:frameworkPreviews).get(task));
@@ -717,7 +717,7 @@
       if(selected&&selectedIssue)query.set('issue',selectedIssue);
       if(selected&&selectedSolutionId)query.set('solution',selectedSolutionId);
       const url='#/cases'+(selected?'/'+encodeURIComponent(selected):'')+'?'+query.toString();
-      history[push?'pushState':'replaceState']({...history.state,numericBridgeCaseReturn:caseReturn||null},'',url);
+      history[push?'pushState':'replaceState']({...history.state,numericBridgeCaseReturn:caseReturn||null,numericBridgeEvaluation:{filter:evaluationFilter,page:evaluationPage}},'',url);
       if(selected)detailHash=location.hash;
     }
     function solutionAction({solution_type:type,target}) {
@@ -863,10 +863,11 @@
       list.querySelectorAll('[data-case]').forEach(b=>b.setAttribute('aria-expanded',String(b.dataset.case===selected&&b.dataset.issue===selectedIssue)));
     }
     const evaluationsPerPage=8;
-    let evaluationLimit=evaluationsPerPage,evaluationFilter='';
+    let evaluationFilter=history.state?.numericBridgeEvaluation?.filter||'';
+    let evaluationPage=evaluationFilter?history.state.numericBridgeEvaluation.page:0;
     function render(syncURL=true) {
       const filterKey=JSON.stringify(configurationFields.map(field=>state[field]));
-      if(filterKey!==evaluationFilter){evaluationFilter=filterKey;evaluationLimit=evaluationsPerPage;}
+      if(filterKey!==evaluationFilter){evaluationFilter=filterKey;evaluationPage=0;}
       refreshSelectors();
       const lookup=retrieve(index,state,{limit:1,allow_alternatives:allowAlternatives});
       const recommendation=recommendConfiguration(index,{...state,allowAlternatives});
@@ -907,20 +908,31 @@
       }).sort(compareEvaluations);
       const evaluationList=items=>items.length?`<ul class="lc-evaluation-links">${items.map(({c,config,record})=>{
         const size=config.searchConfig.model_size;
-        return `<li><button class="link" type="button" data-case="${esc(c.row.id)}" aria-haspopup="dialog">${esc(description('comparison',record).title)}</button><span>${esc(config.model)}${['tiny','unknown'].includes(size)||choiceKey(config.model).includes(choiceKey(size))?'':' · '+esc(display('model_size',size))}</span><a class="link" href="${esc(reportLink(c,'comparison',record.id,state))}">${tx('实测报告','Measured report')} ↗</a></li>`;
+        return `<li><button class="link" type="button" data-case="${esc(c.row.id)}" aria-haspopup="dialog">${esc(description('comparison',record).title)}</button><span>${esc(config.model)}${size==='unknown'||(size!=='tiny'&&choiceKey(config.model).includes(choiceKey(size)))?'':' · '+esc(display('model_size',size))}</span><a class="link" href="${esc(reportLink(c,'comparison',record.id,state))}">${tx('实测报告','Measured report')} ↗</a></li>`;
       }).join('')}</ul>`:'';
       const tiny=evaluations.filter(({config})=>config.searchConfig.model_size==='tiny');
       const primary=evaluations.filter(({config})=>config.searchConfig.model_size!=='tiny');
-      records.innerHTML=`<h2>${tx('评测记录','Evaluations')} <span class="lc-count">${evaluations.length}</span></h2>${evaluationList(primary.slice(0,evaluationLimit))}${primary.length>evaluationLimit?`<button class="btn sm" type="button" data-more-evaluations>${tx('显示更多评测','Show more evaluations')} · ${primary.length-evaluationLimit}</button>`:''}${tiny.length?`<details class="lc-option-group" ${!primary.length?'open':''}><summary>${display('model_size','tiny')} · ${tiny.length}</summary>${evaluationList(tiny)}</details>`:''}${!evaluations.length?`<p class="lc-compact-empty">${tx('暂无符合当前条件的评测记录。','No evaluation records match these filters.')}</p>`:''}`;
-      records.querySelector('[data-more-evaluations]')?.addEventListener('click',()=>{
-        const previousLimit=evaluationLimit;
-        evaluationLimit+=evaluationsPerPage;render(false);
-        focusVisible(records.querySelectorAll(':scope > .lc-evaluation-links button')[previousLimit]);
+      const ordered=[...primary,...tiny],pageCount=Math.max(1,Math.ceil(ordered.length/evaluationsPerPage));
+      evaluationPage=Math.max(0,Math.min(evaluationPage,pageCount-1));
+      const first=evaluationPage*evaluationsPerPage;
+      records.innerHTML=`<h2>${tx('评测记录','Evaluations')} <span class="lc-count">${evaluations.length}</span></h2>${ordered.length?
+        `<div class="lc-evaluation-page${pageCount>1?' lc-multipage':''}">${evaluationList(ordered.slice(first,first+evaluationsPerPage))}</div>`:
+        `<p class="lc-compact-empty">${tx('暂无符合当前条件的评测记录。','No evaluation records match these filters.')}</p>`}
+        ${pageCount>1?`<nav class="lc-pagination" aria-label="${tx('评测记录分页','Evaluation pages')}">
+          <button class="btn sm" type="button" data-evaluation-page="prev" ${evaluationPage===0?'disabled':''}>${tx('上一页','Previous')}</button>
+          <span role="status" tabindex="-1">${tx(`第 ${evaluationPage+1} / ${pageCount} 页`,`Page ${evaluationPage+1} of ${pageCount}`)}</span>
+          <button class="btn sm" type="button" data-evaluation-page="next" ${evaluationPage===pageCount-1?'disabled':''}>${tx('下一页','Next')}</button>
+        </nav>`:''}`;
+      records.querySelectorAll('[data-evaluation-page]').forEach(button=>button.onclick=()=>{
+        const direction=button.dataset.evaluationPage;
+        evaluationPage+=direction==='next'?1:-1;
+        render();
+        focusVisible(records.querySelector(`[data-evaluation-page="${direction}"]:not(:disabled)`)||records.querySelector('.lc-pagination [role="status"]'));
       });
       root.querySelectorAll('[data-case]').forEach(button=>button.onclick=()=>openCase(index.cases.find(c=>c.row.id===button.dataset.case),button));
       if(syncURL)writeURL();
     }
-    root.querySelector('[data-reset]').onclick=()=>{resetFilters();state.q='';allowAlternatives=false;showingExample=false;render();};
+    root.querySelector('[data-reset]').onclick=()=>{resetFilters();evaluationPage=0;state.q='';allowAlternatives=false;showingExample=false;render();};
     render(false);
     const requestedCase=requested&&index.cases.find(c=>c.row.id===requested);
     if(requestedCase)openCase(requestedCase,null,requestedIssue,hash.q.get('solution'));
