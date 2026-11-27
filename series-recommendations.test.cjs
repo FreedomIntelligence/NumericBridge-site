@@ -147,6 +147,16 @@ describe('model series recommendations', { skip: !preview && 'Set NUMERICBRIDGE_
         assert.equal(await row.count(),1);
         assert.ok((await row.innerText()).includes(hardware));
         assert.ok((await row.innerText()).includes(version));
+        const deps=await row.locator('.lc-scoped-dependencies li').allTextContents();
+        if(tp===4){
+          for(const dep of ['torch 2.9.0','torch-npu 2.9.0.post2','vllm-ascend 0.0.0','CANN 9.1.0','transformers 5.3.0'])assert.ok(deps.includes(dep),dep);
+          assert.ok(!deps.includes('torch 2.11.0'));
+        }else{
+          assert.ok(deps.includes('torch 2.11.0'));
+          assert.ok(deps.includes('transformers 5.9.0'));
+          assert.ok(!deps.some(dep=>/torch-npu|CANN|vllm-ascend/i.test(dep)));
+        }
+        assert.ok(!deps.some(dep=>dep.toLowerCase()==='vllm '+version));
         await row.getByRole('button',{name:/查看配置|View settings/}).click();
         await drawer.waitFor();
         const settings=await drawer.innerText();

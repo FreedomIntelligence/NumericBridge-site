@@ -76,6 +76,10 @@
 #v-cases .lc-scoped-stack{display:flex;align-items:baseline;gap:2px 10px;flex-wrap:wrap;min-width:0}
 #v-cases .lc-scoped-hardware{font-weight:550}
 #v-cases .lc-scoped-version{color:var(--muted);font:11px/1.5 var(--mono)}
+#v-cases .lc-scoped-dependencies{display:flex;align-items:baseline;gap:2px 8px;flex-wrap:wrap;margin-top:4px;color:var(--muted);font-size:11px}
+#v-cases .lc-scoped-dependencies>span{font-weight:600;white-space:nowrap}
+#v-cases .lc-scoped-dependencies ul{display:flex;align-items:baseline;flex-wrap:wrap;gap:3px 5px;min-width:0;list-style:none}
+#v-cases .lc-scoped-dependencies li{padding:0 5px;border-radius:4px;background:var(--wash);overflow-wrap:anywhere}
 #v-cases .lc-scoped-adaptation{margin-top:4px}
 @media(max-width:480px){#v-cases .lc-scoped-stack{display:grid;gap:2px}#v-cases .lc-scoped-top{gap:6px}}
 #v-cases .lc-scoped-adaptation b{font-weight:600;margin-inline-end:4px}

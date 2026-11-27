@@ -986,6 +986,10 @@
           const data=config.searchConfig;
           const framework=canonical('library',library.name);
           const version=[framework,library.version].filter(Boolean).join(' ');
+          // List versions from this exact environment, excluding the framework already shown above.
+          const dependencies=[...new Set(config.libraries.filter(lib=>lib.version&&
+            !(choiceKey(canonical('library',lib.name))===choiceKey(framework)&&lib.version===library.version))
+            .map(lib=>lib.name+' '+lib.version))];
           const size=data.model_size&&!['unknown','tiny'].includes(data.model_size)&&!choiceKey(checkpoint).includes(choiceKey(data.model_size))?display('model_size',data.model_size):'';
           const intervention=data.settings?.precision_intervention;
           const adaptation=[binding?description('candidate',binding.solution).title:'',binding?scope:'',typeof intervention==='string'?intervention:''].filter(Boolean);
@@ -995,6 +999,7 @@
             <div class="lc-scoped-top"><div class="lc-scoped-stack">
               <span class="lc-scoped-hardware">${esc(config.hardware)}${size?' · '+esc(size):''}</span><span class="lc-scoped-version">${esc(version)}</span></div>
               <button type="button" class="lc-entry-action" data-evidence-preview="${previewId}" aria-haspopup="dialog" aria-label="${esc([label,config.hardware,version].filter(Boolean).join(' · '))}">${label} ${icon('arrow')}</button></div>
+            ${dependencies.length?`<div class="lc-scoped-dependencies"><span>${tx('实测依赖','Tested dependencies')}</span><ul>${dependencies.map(dep=>`<li>${esc(dep)}</li>`).join('')}</ul></div>`:''}
             ${adaptation.length?`<p class="lc-scoped-adaptation"><b>${tx('适配','Adaptation')}</b> ${esc([...new Set(adaptation)].join(' · '))}</p>`:''}</li>`;
         }).join('');
         return `<article class="lc-scoped-recommendation"><h4>${esc(checkpoint)}</h4><ul class="lc-scoped-configs">${tested}</ul></article>`;
