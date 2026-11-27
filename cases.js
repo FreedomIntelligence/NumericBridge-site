@@ -57,6 +57,22 @@
     if(annotated&&releaseVersion.test(annotated))return {number:annotated,kind:/source directory/i.test(raw)?'source':'release'};
     return {number:'',kind:source||commitVersion.test(raw)||commitVersion.test(commit??'')||/^(?:\S+ )?source(?:\b|@)/i.test(raw)?'source':''};
   }
+  const seriesKey=value=>choiceKey(value).replace(/[- ](?=\d)/g,'');
+  const architectureType=value=>String(value||'').match(/(?:^|[^a-z\d])(dense|moe)(?=$|[^a-z\d])/i)?.[1].toLowerCase();
+  function modelIdentity(indexed,model={}) {
+    const metadata=[model.architecture,indexed.model_architecture,indexed.model_group].filter(v=>typeof v==='string'&&v&&choiceKey(v)!=='unclassified');
+    const types=new Set(metadata.map(architectureType).filter(Boolean));
+    const type=types.size===1?[...types][0]:'';
+    const name=indexed.model||model.name||'';
+    const base=(indexed.model_series||indexed.model_family||metadata.at(-1)||'').split(/\s*[·+/]\s*/)[0].replace(/(?:^|[\s-]+)(?:dense|moe)$/i,'').trim();
+    // A checkpoint can carry a more precise generation than its architecture
+    // group. Only use an explicit size-delimited name from the same family.
+    const checkpoint=name.split('/').at(-1).match(/^([a-z][a-z\d]*(?:[ -]?\d+)?(?:\.\d+)*)(?=-\d+(?:\.\d+)?[bB](?:$|[-_\s]))/i)?.[1];
+    const generationStem=value=>seriesKey(value).match(/^([a-z]+)\d+(?:\.\d+)*$/)?.[1];
+    const series=checkpoint&&generationStem(base)&&generationStem(checkpoint)===generationStem(base)&&seriesKey(checkpoint)!==seriesKey(base)?checkpoint:(base||name);
+    const traits=[...new Set(metadata.flatMap(value=>value.split(/\s*[·+/]\s*/).slice(1)).filter(s=>s&&!architectureType(s)))];
+    return {series,type,traits};
+  }
   function buildIndex(relations, evaluations, repairs, searchMetadata=null) {
     const records = new Map(), members = new Map();
     for (const [kind, rows] of [['comparison', evaluations.evaluations], ['repair', repairs.repairs], ['entity', relations.entities]]) {
@@ -83,7 +99,11 @@
       const configs=new Map(searchMetadata.cases.flatMap(c=>c.configurations).map(c=>[c.id,c]));
       for(const c of cases)for(const config of c.configurations){
         config.searchConfig=configs.get(`${config.kind}:${config.recordId}:${config.sideId??0}`);
-        if(config.searchConfig)config.platforms=config.searchConfig.platforms;
+        if(config.searchConfig){
+          config.platforms=config.searchConfig.platforms;
+          const record=records.get(key(config.kind,config.recordId));
+          Object.assign(config,modelIdentity(config.searchConfig,record?.model));
+        }
         config.searchContext={aliases:searchMetadata.aliases,hardware_rules:searchMetadata.hardware_rules};
       }
     }
@@ -100,15 +120,16 @@
   }
   const configurationFields=['hardware','model','model_size','library','version','task'];
   function configurationDifferences(config,filters) {
+    const seriesDifference=filters.series&&seriesKey(config.series||'')!==seriesKey(filters.series)?['series']:[];
     if(config.searchConfig&&filters.hardwareMode==='platform'){
       const request=Search.normalizeRequest(Object.fromEntries(configurationFields.map(k=>[k,filters[k]||''])),config.searchContext);
-      return Search.configurationDifferences(config.searchConfig,request);
+      return [...seriesDifference,...Search.configurationDifferences(config.searchConfig,request)];
     }
-    return configurationFields.filter(field=>filters[field] && !(
+    return [...seriesDifference,...configurationFields.filter(field=>filters[field] && !(
       field==='library' ? config.libraries.some(lib=>lib.name===filters.library) :
       field==='version' ? filters.library && config.libraries.some(lib=>lib.name===filters.library&&lib.version===filters.version) :
       field==='task' ? config.tasks.includes(filters.task) :
-      field==='hardware' && filters.hardwareMode==='platform' ? config.platforms.includes(filters.hardware)||config.hardware===filters.hardware : config[field]===filters[field]));
+      field==='hardware' && filters.hardwareMode==='platform' ? config.platforms.includes(filters.hardware)||config.hardware===filters.hardware : config[field]===filters[field]))];
   }
   function configurationMatches(config,filters) {
     return !(filters.version&&!filters.library) && configurationDifferences(config,filters).length===0;
@@ -189,7 +210,7 @@
       (b.record.date||'').localeCompare(a.record.date||'')||a.record.id.localeCompare(b.record.id)||a.config.hardware.localeCompare(b.config.hardware))[0]||null;
   }
   function configurationIssues(index,filters) {
-    if (!['hardware','model','library'].every(field=>filters[field])) return [];
+    if (!filters.hardware||!(filters.model||filters.series)||!filters.library) return [];
     const found=new Map();
     for (const c of filterCases(index,{...filters,category:'',q:''}).filter(c=>c.category!=='workflow-benchmark')) {
       for (const entry of c.entries.filter(e=>e.kind==='issue')) {
@@ -279,13 +300,59 @@
   const sourceCovers=(source,pointer)=>source.pointer===pointer||pointer.startsWith(source.pointer+'/');
   const reportLink=(c,kind,id,filters={},issue='',solution='')=>{
     const params=new URLSearchParams({[kind]:id});
-    for(const field of configurationFields)if(filters[field])params.set(field,filters[field]);
+    for(const field of [...configurationFields,'series'])if(filters[field])params.set(field,filters[field]);
     if(filters.allowAlternatives)params.set('alternatives','1');
     if(filters.showingExample)params.set('example','1');
     if(issue)params.set('issue',issue);
     if(solution)params.set('solution',solution);
     return `#/report/${encodeURIComponent(c.row.id)}?${params}`;
   };
+  // Only reuse recommendation entries explicitly compiled for the matched configuration.
+  // A series is a discovery filter, never a new scope for an evidence claim.
+  function seriesRecommendations(index,filters) {
+    const groups=new Map();
+    const canonical=name=>index.search.aliases.library[choiceKey(name)]||name;
+    for(const c of index.cases){
+      if(c.category==='workflow-benchmark')continue;
+      for(const config of c.configurations){
+        const metadata=config.searchConfig;
+        if(!metadata||!configurationMatches(config,{...filters,model:''}))continue;
+        const type=config.type==='dense'?'Dense':config.type==='moe'?'MoE':'';
+        const base=type||'unknown';
+        const exactFrameworks=new Set(metadata.frameworks.map(canonical));
+        const libraries=config.libraries.filter(lib=>exactFrameworks.has(canonical(lib.name))&&
+          (!filters.library||canonical(lib.name)===canonical(filters.library))&&(!filters.version||lib.version===filters.version));
+        const record=index.records.get(key(config.kind,config.recordId));
+        const rows=[];
+        for(const support of metadata.recommendations){
+          const binding=support.verification_id&&support.candidate_id?verificationBindings(index,c).find(b=>
+            b.verification.id===support.verification_id&&b.solution.id===support.candidate_id&&
+            b.verification.details.sources.some(s=>s.kind==='repair'&&s.id===config.recordId&&s.pointer==='/validation/metrics')):null;
+          if(config.kind==='repair'&&!binding)continue;
+          const intervention=config.settings.precision_intervention;
+          const adaptation=[intervention,binding?.solution.details.title,binding?.solution.details.strategy]
+            .filter(v=>typeof v==='string'&&v).join(' ');
+          // Special features come only from structured architecture metadata and
+          // are promoted to a separate group only with matching adaptation evidence.
+          const traits=type?(config.traits||[]).filter(trait=>adaptation&&choiceKey(adaptation).includes(choiceKey(trait))):[];
+          const architecture=traits.length?[base,...traits].join(' · '):base;
+          for(const library of libraries){
+            if(support.library_keys?.length&&!support.library_keys.includes(choiceKey(canonical(library.name))))continue;
+            rows.push({architecture,c,config,record,library,binding,scope:support.scope});
+          }
+        }
+        if(!rows.length&&!groups.has(base))groups.set(base,new Map());
+        for(const row of rows){
+          if(!groups.has(row.architecture))groups.set(row.architecture,new Map());
+          const signature=JSON.stringify([metadata.id,canonical(row.library.name),row.library.version,row.binding?.solution.id]);
+          groups.get(row.architecture).set(signature,row);
+        }
+      }
+    }
+    return [...groups].sort(([a],[b])=>a==='unknown'?1:b==='unknown'?-1:a.localeCompare(b))
+      .map(([architecture,rows])=>({architecture,rows:[...rows.values()].sort((a,b)=>
+        Number(!!b.binding)-Number(!!a.binding)||(b.record.date||'').localeCompare(a.record.date||'')||a.record.id.localeCompare(b.record.id))}));
+  }
   const verificationBindings=(index,c)=>{
     const members=new Set(c.entries.map(e=>key(e.kind,e.id)));
     return index.relations.links.flatMap(link=>link.relation==='verifies'&&link.from.kind==='verification'&&link.to.kind==='candidate'&&
@@ -382,6 +449,8 @@
     const state=Object.fromEntries(configurationFields.map(k=>[k,hash.q.get(k)||'']));
     try{Object.assign(state,Search.normalizeRequest(Object.fromEntries(configurationFields.map(k=>[k,state[k]])),index.search));delete state.query;}
     catch(error){root.innerHTML=`<div class="wrap lc-error"><h1>${tx('请核对检索条件','Check the search request')}</h1><p>${esc(error.message)}</p><a href="#/cases">${tx('清除条件重新选择','Clear filters and choose again')}</a></div>`;return;}
+    // 'model' retains its previous exact/architecture-filter semantics.
+    state.series=state.model?'':(hash.q.get('series')||'').trim();
     state.q='';
     let allowAlternatives=hash.q.get('alternatives')==='1';
     state.hardwareMode='platform';
@@ -414,7 +483,7 @@
     const configs=catalogCases.flatMap(c=>c.configurations);
     const canonical=(field,value)=>index.search.aliases[field]?.[choiceKey(value)]||value;
     const defaultFramework=canonical('library','vLLM');
-    const resetFilters=()=>{for(const field of configurationFields)state[field]='';state.library=defaultFramework;};
+    const resetFilters=()=>{for(const field of configurationFields)state[field]='';state.series='';state.library=defaultFramework;};
     const example=hash.q.get('example')==='1'&&index.search.cases.flatMap(c=>c.configurations.filter(config=>config.recommendations.length))
       .sort((a,b)=>(b.date||'').localeCompare(a.date||'')||a.id.localeCompare(b.id))
       .flatMap(config=>config.libraries.filter(lib=>config.frameworks.includes(canonical('library',lib.name))&&
@@ -508,14 +577,14 @@
     for(const modal of [dialog,optionDialog])modal.addEventListener('click',event=>{const rect=modal.getBoundingClientRect();if(event.target===modal&&(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom))modal.close();});
     function valuesFor(field) {
       if(field==='hardware')return unique(configs.flatMap(c=>c.platforms));
-      if(field==='model')return unique(configs.map(c=>c.searchConfig?.model_group??c.searchConfig?.model_architecture));
+      if(field==='model')return unique([...new Map(configs.filter(c=>c.series).map(c=>[seriesKey(c.series),c.series])).values()]);
       if(field==='version')return unique(configs.filter(c=>c.searchConfig?.frameworks.includes(state.library)&&
         (!state.task||c.tasks.includes(state.task)))
         .flatMap(c=>c.libraries.filter(lib=>canonical('library',lib.name)===state.library).map(lib=>lib.version)));
       return [];
     }
     const rankedChoices=(field,values,task='')=>values.map(value=>({value,count:filterCases({cases:catalogCases},
-      {hardwareMode:state.hardwareMode,task,[field]:value}).length}))
+      {hardwareMode:state.hardwareMode,task,[field==='model'?'series':field]:value}).length}))
       .sort((a,b)=>b.count-a.count||a.value.localeCompare(b.value)).map(row=>row.value);
     const previews=Object.fromEntries(['hardware','model'].map(field=>[field,rankedChoices(field,valuesFor(field)).slice(0,field==='hardware'?5:4)]));
     const frameworkCatalog=new Map(frameworkGroups.map(([task])=>[task,unique(configs.filter(c=>c.tasks.includes(task)).flatMap(c=>c.searchConfig?.frameworks||[]))]));
@@ -539,7 +608,7 @@
       return `<button class="pill lc-choice lc-more" type="button" data-selector-more="${field}" aria-label="${tx('更多','More')} ${labels[field]}" aria-haspopup="dialog" title="${tx('更多选项','More options')}">…</button>`;
     }
     function bindChoices(box,field) {
-      box.querySelectorAll('[data-choose-field]').forEach(button=>button.onclick=()=>choose(field,button.dataset.value,button.dataset.task));
+      box.querySelectorAll('[data-choose-field]').forEach(button=>button.onclick=()=>choose(field,button.dataset.value,button.dataset.task,button.hasAttribute('data-model-series')));
       box.querySelector('[data-selector-more]')?.addEventListener('click',event=>openOptions(field,event.currentTarget));
     }
     function fitPreviewChoices(row) {
@@ -637,21 +706,20 @@
         choiceKey(display(field,value)).includes(term)||
         choiceKey(choiceGroup(field,value)?.[1]||'').includes(term));
       if(expanded&&state[field]&&!values.includes(state[field])&&!query&&field!=='model')values.push(state[field]);
-      const choice=(value,label=display(field,value))=>`<button class="pill lc-choice" type="button" data-choose-field="${field}" data-value="${esc(value)}" aria-pressed="${state[field]===value}">${field==='hardware'?hardwareMark(value):field==='model'?modelMark(value):''}<span>${esc(label)}</span></button>`;
+      const choice=(value,label=display(field,value),asSeries=field==='model'&&!!value)=>`<button class="pill lc-choice" type="button" data-choose-field="${field}" data-value="${esc(value)}"${asSeries?` data-model-series="${esc(value)}"`:''} aria-pressed="${asSeries?seriesKey(state.series)===seriesKey(value):state[field]===value&&(field!=='model'||!state.series)}">${field==='hardware'?hardwareMark(value):field==='model'?modelMark(value):''}<span>${esc(label)}</span></button>`;
       const clear=choice('',tx('不限','Any'));
-      const exactModels=field==='model'&&expanded?unique(configs.map(c=>c.searchConfig).filter(c=>{
-        if(!c?.model||all.some(value=>sameChoice(value,c.model)))return false;
-        return term?[c.model,...(c.keys.model_identity??[])].some(name=>choiceKey(name).includes(term)):
-          c.model_size!=='tiny'&&state.model&&c.keys.model.includes(choiceKey(state.model));
-      }).map(c=>c.model)):[];
-      const custom=query&&![...all,...exactModels].some(value=>sameChoice(value,alias))?choice(query,tx('使用','Use')+' '+query):'';
+      // Old exact-model selection is still available through search, never as a primary pill.
+      const exactModels=field==='model'&&expanded&&term?unique(configs.map(c=>c.searchConfig).filter(c=>
+        c?.model&&!all.some(value=>sameChoice(value,c.model))&&[c.model,...(c.keys.model_identity??[])].some(name=>choiceKey(name).includes(term))
+      ).map(c=>c.model)):[];
+      const custom=field!=='model'&&query&&![...all,...exactModels].some(value=>sameChoice(value,alias))?choice(query,tx('使用','Use')+' '+query):'';
       if(expanded&&choiceGroups[field]){
         const groups=new Map(choiceGroups[field].map(([id,label])=>[id,{label,values:[]}]));
         groups.set('other',{label:field==='hardware'?tx('其他硬件','Other hardware'):tx('其他模型','Other models'),values:[]});
         for(const value of values)groups.get(choiceGroup(field,value)?.[0]||'other').values.push(value);
         box.innerHTML=`<div class="pills">${clear}${custom}</div>`+[...groups].filter(([, group])=>group.values.length)
           .map(([id, group])=>`<section class="lc-option-group" aria-labelledby="lc-group-${id}"><h3 id="lc-group-${id}">${esc(group.label)}</h3><div class="pills">${group.values.map(value=>choice(value)).join('')}</div></section>`).join('');
-        if(exactModels.length)box.insertAdjacentHTML('beforeend',`<section class="lc-option-group" aria-labelledby="lc-exact-models"><h3 id="lc-exact-models">${tx('具体型号','Specific models')}</h3><div class="pills">${exactModels.map(value=>choice(value)).join('')}</div></section>`);
+        if(exactModels.length)box.insertAdjacentHTML('beforeend',`<section class="lc-option-group" aria-labelledby="lc-exact-models"><h3 id="lc-exact-models">${tx('具体型号','Specific models')}</h3><div class="pills">${exactModels.map(value=>choice(value,display(field,value),false)).join('')}</div></section>`);
       }else{
         const buttons=clear+values.map(value=>choice(value)).join('')+custom;
         box.innerHTML=expanded?`<div class="pills">${buttons}</div>`:buttons+moreChoice(field);
@@ -662,11 +730,12 @@
     function refreshSelectors() {
       previewResize.disconnect();
       root.querySelector('.lc-selectors').innerHTML=selectorKeys.map((field,i)=>{
-        const hasValue=state[field]||field==='library'&&state.task;
-        const outsidePreview=previews[field]&&hasValue&&!previews[field].includes(state[field]);
+        const selectedValue=field==='model'?(state.series||state.model):state[field];
+        const hasValue=selectedValue||field==='library'&&state.task;
+        const outsidePreview=previews[field]&&hasValue&&!previews[field].includes(selectedValue);
         const summary=field==='version'&&state.version?requestedVersion(state.version):
           field==='model'&&state.model_size?[state.model,display('model_size',state.model_size)].filter(Boolean).join(' · '):
-          outsidePreview||field==='library'&&!state.task?state[field]:'';
+          outsidePreview||field==='library'&&!state.task?selectedValue:'';
         const controls=`<div class="${field==='library'?'lc-framework-options':'pills'}" data-choices="${field}"></div>`;
         return `<fieldset class="lc-select-field${hasValue?' has-value':''}"><legend><span class="lc-field-label"><span><span class="lc-field-step">0${i+1}</span>${labels[field]}${field==='version'?` <small>${tx('可选','Optional')}</small>`:''}</span>${selectionLabel(summary)}</span></legend>${controls}</fieldset>`;
       }).join('');
@@ -694,8 +763,8 @@
           root.querySelector('.lc-selectors [data-framework-toggle]:not([hidden])')))||choices[0];
       if(!focusVisible(button))focusVisible(root.querySelector('[data-reset]'));
     }
-    function choose(field,value,task='') {
-      const request=Object.fromEntries(configurationFields.map(k=>[k,state[k]]));request[field]=value;
+    function choose(field,value,task='',asSeries=false) {
+      const request=Object.fromEntries(configurationFields.map(k=>[k,state[k]]));request[field]=asSeries?'':value;
       if(field==='library'){request.task=task;request.version='';}
       if(field==='model')request.model_size='';
       try{const normalized=Search.normalizeRequest(request,index.search);for(const k of configurationFields)state[k]=normalized[k];}
@@ -704,6 +773,7 @@
         if(optionDialog.open)root.querySelector('[data-options-search]').focus({preventScroll:true});
         return;
       }
+      if(field==='model')state.series=asSeries?value:'';
       allowAlternatives=false;showingExample=false;
       if(optionDialog.open){optionReturn=null;optionDialog.close();updateLock();}
       render();focusChoice(field);
@@ -767,7 +837,9 @@
           return metrics?.length?[{solution,verification,record,metrics}]:[];
         });
       }).sort((a,b)=>Number(b.record.id===focused?.config?.recordId)-Number(a.record.id===focused?.config?.recordId));
-      const environmentLabel=config=>[config.platforms.join(' / ')||config.hardware,config.model,...config.tasks.map(taskLabel)].filter(Boolean).join(' · ');
+      const environmentLabel=config=>[config.platforms.join(' / ')||config.hardware,config.model,
+        config.searchConfig?.model_size&&config.searchConfig.model_size!=='unknown'?display('model_size',config.searchConfig.model_size):'',
+        config.searchConfig?.model_revision?'Revision: '+config.searchConfig.model_revision:'',...config.tasks.map(taskLabel)].filter(Boolean).join(' · ');
       const requestedSolution=solutionRows.find(s=>s.id===solutionId);
       selectedSolutionId=requestedSolution?.id||'';
       let selectedSolution=requestedSolution||solutionRows[0],groups=[],pending=bindings.length>0;
@@ -865,17 +937,47 @@
     const evaluationsPerPage=8;
     let evaluationFilter=history.state?.numericBridgeEvaluation?.filter||'';
     let evaluationPage=evaluationFilter?history.state.numericBridgeEvaluation.page:0;
+    const scopedModule=(groups)=>groups.length?groups.map(({architecture,rows})=>{
+      const heading=architecture==='unknown'?tx('架构未记录或无法确认','Architecture not recorded or uncertain'):
+        tx(architecture+' 推荐配置',architecture+' recommendations');
+      const entries=rows.map(({c,config,record,library,binding,scope})=>{
+        const data=config.searchConfig;
+        const runtime=Object.entries(data.settings||{}).filter(([name,value])=>value!=null&&
+          ['string','number','boolean'].includes(typeof value)&&/^(?:dtype|precision|mode|eager|enforce_eager|parallel(?:ism)?|.*parallel.*|[tdep]p|[tdep]p_size|world_size|launch|batch_size|prefill_budget_tokens|cache_block_tokens|训练)$/i.test(name));
+        const recorded=(value)=>value||tx('未记录','Not recorded');
+        const framework=canonical('library',library.name);
+        const tasks=(state.task?[state.task]:config.tasks).map(taskLabel).join(' / ');
+        const model=[data.model,data.model_size&&data.model_size!=='unknown'?display('model_size',data.model_size):''].filter(Boolean).join(' · ');
+        const conditions=[config.hardware,tasks,...runtime.map(([name,value])=>name+'='+value),binding?.solution.details.applicability].filter(Boolean).join(' · ');
+        const intervention=data.settings?.precision_intervention;
+        const adaptation=[binding?description('candidate',binding.solution).title:'',scope,typeof intervention==='string'?intervention:''].filter(Boolean);
+        if(!adaptation.length)adaptation.push(tx('记录未标注额外适配；以链接中的验证条件为准。','No additional adaptation recorded; use the linked verification conditions.'));
+        const version=[library.version,library.commit].filter(Boolean).join(' · ');
+        const evidence=binding?reportLink(c,'verification',binding.verification.id,state,'',binding.solution.id):reportLink(c,'comparison',record.id,state);
+        const limitations=binding?.solution.details.limitations;
+        const evidenceScope=[data.scope,...(Array.isArray(limitations)?limitations:[limitations])].filter(Boolean).join(' · ');
+        const facts=[[tx('适用条件','Conditions'),conditions],[tx('实测 checkpoint','Tested checkpoint'),model],
+          ['Revision',recorded(data.model_revision)],[tx('实测框架版本','Tested framework version'),framework+' · '+recorded(version)],
+          [tx('所需适配','Adaptation'),[...new Set(adaptation)].join(' · ')]];
+        if(evidenceScope)facts.push([tx('验证范围','Verified scope'),evidenceScope]);
+        return `<article class="lc-scoped-recommendation" data-checkpoint="${esc(data.model)}" data-framework-version="${esc(library.version||'')}">
+          <dl>${facts.map(([label,value])=>`<div><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`).join('')}</dl>
+          <a class="link" href="${esc(evidence)}">${tx('查看验证证据','View verification evidence')} ↗</a></article>`;
+      }).join('');
+      return `<section class="lc-architecture" data-architecture="${esc(architecture)}"><h3>${esc(heading)}</h3>${entries||moduleEmpty(tx('暂无已验证配置','No verified configuration yet'))}</section>`;
+    }).join(''):moduleEmpty(tx('暂无已验证配置','No verified configuration yet'));
     const moduleEmpty=text=>`<p class="lc-module-empty">${esc(text)}</p>`;
     function render(syncURL=true) {
-      const filterKey=JSON.stringify(configurationFields.map(field=>state[field]));
+      const filterKey=JSON.stringify([...configurationFields,'series'].map(field=>state[field]));
       if(filterKey!==evaluationFilter){evaluationFilter=filterKey;evaluationPage=0;}
       refreshSelectors();
-      const lookup=retrieve(index,state,{limit:1,allow_alternatives:allowAlternatives});
-      const recommendation=recommendConfiguration(index,{...state,allowAlternatives});
+      const grouped=state.series?seriesRecommendations(index,state):null;
+      const lookup=grouped?null:retrieve(index,state,{limit:1,allow_alternatives:allowAlternatives});
+      const recommendation=grouped?null:recommendConfiguration(index,{...state,allowAlternatives});
       const issues=configurationIssues(index,recommendation?{...state,version:recommendation.library.version||''}:state);
       const ready=['hardware','model','library'].every(field=>state[field]);
       const section=root.querySelector('.lc-recommendation');
-      section.innerHTML=`<h2>${tx('推荐配置','Recommended configuration')}${showingExample?` <span class="lc-badge" data-example-label>${tx('示例','Example')}</span>`:''}</h2><div class="lc-module-body">`+(recommendation?(()=>{
+      section.innerHTML=`<h2 id="lc-recommendation-title">${tx('推荐配置','Recommended configuration')}${showingExample?` <span class="lc-badge" data-example-label>${tx('示例','Example')}</span>`:''}</h2><div class="lc-module-body"${grouped?' tabindex="0" aria-labelledby="lc-recommendation-title" role="region"':''}>`+(grouped?scopedModule(grouped):recommendation?(()=>{
         const {case:c,config,library,solution}=recommendation;
         const version=libraryVersion(library),requested=requestedVersion(state.version);
         const details=solution?'':`<button class="link lc-detail-link" type="button" data-case="${esc(c.row.id)}" aria-haspopup="dialog">${tx('配置与验证详情','Configuration & verification')} ↗</button>`;
@@ -886,7 +988,7 @@
       })():moduleEmpty(ready&&lookup.recommendation_gaps.includes('specific-model-required-for-recommendation')?
         tx('暂时没有适用于整个模型系列的推荐配置','No recommended configuration for the entire model family yet'):
         tx('暂时没有推荐配置','No recommended configuration yet')))+`</div>`;
-      if(!recommendation&&lookup.alternatives.length)section.querySelector('.lc-module-body').insertAdjacentHTML('beforeend',`<button class="btn sm" type="button" data-show-alternatives>${tx('查看其他版本','View other versions')}</button>`);
+      if(!recommendation&&lookup?.alternatives.length)section.querySelector('.lc-module-body').insertAdjacentHTML('beforeend',`<button class="btn sm" type="button" data-show-alternatives>${tx('查看其他版本','View other versions')}</button>`);
       section.querySelector('[data-show-alternatives]')?.addEventListener('click',()=>{
         allowAlternatives=true;render();
         const target=section.querySelector('h2');target.tabIndex=-1;focusVisible(target);
@@ -951,7 +1053,7 @@
     const request={};root._reportRequest=request;
     const active=()=>root._reportRequest===request&&!root.hidden;
     const backParams=new URLSearchParams();
-    for(const field of [...configurationFields,'alternatives','example','issue','solution'])if(hash.q.get(field))backParams.set(field,hash.q.get(field));
+    for(const field of [...configurationFields,'series','alternatives','example','issue','solution'])if(hash.q.get(field))backParams.set(field,hash.q.get(field));
     const back=hash.arg?`#/cases/${encodeURIComponent(hash.arg)}${backParams.size?'?'+backParams:''}`:'#/cases';
     const backLink=`<a class="link" href="${esc(back)}">← ${tx('返回案例','Back to case')}</a>`;
     const paint=html=>{if(active())root.innerHTML=`<article class="wrap lc-report">${backLink}${html}</article>`;};
@@ -1056,6 +1158,6 @@
     };
   }
 
-  global.NumericBridgeCases={buildIndex,filterCases,configurationDifferences,configurationMatches,assessCoverage,recommendConfiguration,configurationIssues,issueResolution,issueSolutions,loadCoverage,mount,mountReport,mountAcknowledgments};
+  global.NumericBridgeCases={buildIndex,filterCases,configurationDifferences,configurationMatches,assessCoverage,recommendConfiguration,modelIdentity,seriesRecommendations,configurationIssues,issueResolution,issueSolutions,loadCoverage,mount,mountReport,mountAcknowledgments};
   if(typeof module!=='undefined'&&module.exports)module.exports=global.NumericBridgeCases;
 })(typeof window!=='undefined'?window:globalThis);

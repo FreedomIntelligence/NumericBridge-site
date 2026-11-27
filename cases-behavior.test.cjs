@@ -313,6 +313,7 @@ describe('public cases interactions', { skip: !preview && 'Set NUMERICBRIDGE_PRE
     const firstPage = await rows.allTextContents();
     const height = (await pane.boundingBox()).height;
     await next.press('Enter');
+    await page.evaluate(() => scrollTo({top:0,behavior:'instant'}));
     assert.ok(await rows.count() <= 8);
     assert.notDeepEqual(await rows.allTextContents(), firstPage);
     assert.equal((await pane.boundingBox()).height, height);
@@ -327,7 +328,7 @@ describe('public cases interactions', { skip: !preview && 'Set NUMERICBRIDGE_PRE
     await prev.press('Enter');
     assert.deepEqual(await rows.allTextContents(), firstPage);
     await page.setViewportSize({width:1050,height:750});
-    await page.evaluate(() => scrollTo(0,0));
+    await page.evaluate(() => scrollTo({top:0,behavior:'instant'}));
     await aligned();
     await page.setViewportSize({width:390,height:850});
     assert.ok((await issues.boundingBox()).y < (await records.boundingBox()).y);
