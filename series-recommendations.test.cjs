@@ -116,14 +116,10 @@ describe('model series recommendations', { skip: !preview && 'Set NUMERICBRIDGE_
       const card = dense.locator('[data-checkpoint="' + checkpoint + '"][data-framework-version="0.20.0"]');
       await card.waitFor();
       assert.equal(await results.locator('[data-architecture="MoE"]').count(), 0);
-      const expanded = card.locator('details');
-      assert.equal(await expanded.getAttribute('open'), null);
+      assert.equal(await card.locator('details').count(), 0);
       const summary = await card.innerText();
       for (const value of [/H200/, /推理|Inference/, /Qwen3\.5-9B-Base/, /PEFT.*0\.20\.0/, /偏置|bias/i]) assert.match(summary, value);
       assert.doesNotMatch(summary, /68c46c4b3498877f3ef123c856ecfde50c39f404/);
-      await expanded.locator('summary').click();
-      assert.match(await expanded.innerText(), /68c46c4b3498877f3ef123c856ecfde50c39f404/);
-      await expanded.locator('summary').click();
       if (mobile) await assertNoHorizontalOverflow(page, card);
       const evidence = card.getByRole('link');
       const href = await evidence.getAttribute('href');
@@ -162,10 +158,13 @@ describe('model series recommendations', { skip: !preview && 'Set NUMERICBRIDGE_
     const clean = results.locator('[data-checkpoint="Qwen/Qwen3-1.7B"]').first();
     await clean.waitFor();
     assert.equal(await clean.locator('.lc-scoped-adaptation').count(), 0);
-    assert.match(await clean.innerText(), /TP 4/);
-    assert.doesNotMatch(await clean.innerText(), /prefill_budget_tokens/);
-    await clean.locator('summary').click();
-    assert.match(await clean.innerText(), /prefill_budget_tokens/);
+    assert.equal(await clean.locator('details').count(), 0);
+    assert.doesNotMatch(await clean.innerText(), /TP 4|prefill_budget_tokens/);
+    await clean.getByRole('link').click();
+    const paramsTable = page.locator('#v-report details').filter({hasText:'tensor_parallel'}).first();
+    await paramsTable.locator('summary').click();
+    assert.match(await paramsTable.innerText(), /tensor_parallel\s*4/);
+    assert.match(await paramsTable.innerText(), /prefill_budget_tokens/);
 
     await visitCases(page, { ...supported, series: 'Qwen3.5', version: '0.0.0', alternatives: '1' });
     assert.match(await results.locator(empty).first().textContent(), /暂无已验证配置|No verified configuration yet/);

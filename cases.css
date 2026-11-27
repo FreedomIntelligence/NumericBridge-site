@@ -82,12 +82,6 @@
 #v-cases .lc-scoped-conditions li{padding:1px 6px;border-radius:4px;background:var(--wash);color:var(--muted);font-size:11px;max-width:100%}
 #v-cases .lc-scoped-adaptation{margin-top:8px}
 #v-cases .lc-scoped-adaptation b{font-weight:600;margin-inline-end:4px}
-#v-cases .lc-scoped-details{margin-top:7px}
-#v-cases .lc-scoped-details summary{width:fit-content;color:var(--muted);cursor:pointer}
-#v-cases .lc-scoped-details dl{border-top:1px solid var(--hair);padding-top:6px;margin-top:6px}
-#v-cases .lc-scoped-details dl div{display:grid;grid-template-columns:minmax(0,8rem) minmax(0,1fr);gap:4px 8px;margin-bottom:4px}
-#v-cases .lc-scoped-details dt{color:var(--muted)}
-@media(max-width:480px){#v-cases .lc-scoped-details dl div{grid-template-columns:minmax(0,1fr);gap:0;margin-bottom:6px}}
 #v-cases .lc-related .lc-list{border:none}
 #v-cases .lc-pagination{flex:none;margin-top:auto}
 #v-cases .lc-evaluation-page{min-height:0;overflow:auto;scrollbar-width:thin}

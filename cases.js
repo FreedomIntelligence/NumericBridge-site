@@ -943,30 +943,19 @@
       const entries=rows.map(({c,config,record,library,binding,scope})=>{
         const data=config.searchConfig;
         const settings=data.settings||{};
-        const runtime=Object.entries(settings).filter(([name,value])=>name!=='precision_intervention'&&value!=null&&
-          (['string','number','boolean'].includes(typeof value)||Array.isArray(value)&&value.every(v=>['string','number','boolean'].includes(typeof v))));
         const framework=canonical('library',library.name);
         const tasks=(state.task?[state.task]:config.tasks).map(taskLabel).join(' / ');
         const version=[framework,library.version].filter(Boolean).join(' ');
         const size=data.model_size&&!['unknown','tiny'].includes(data.model_size)&&!choiceKey(data.model).includes(choiceKey(data.model_size))?display('model_size',data.model_size):'';
-        const precision=settings.dtype??settings.precision;
-        const tp=settings.tensor_parallel_size??settings.tensor_parallel??settings.tp;
-        const conditions=[config.hardware,tasks,typeof precision==='string'&&precision.length<=24?precision:'',typeof tp==='number'||typeof tp==='string'?('TP '+tp):'',size].filter(Boolean);
+        const conditions=[config.hardware,tasks,size].filter(Boolean);
         const intervention=settings.precision_intervention;
         const adaptation=[binding?description('candidate',binding.solution).title:'',binding?scope:'',typeof intervention==='string'?intervention:''].filter(Boolean);
         const evidence=binding?reportLink(c,'verification',binding.verification.id,state,'',binding.solution.id):reportLink(c,'comparison',record.id,state);
-        const limitations=binding?.solution.details.limitations;
-        const evidenceScope=[data.scope,!binding?scope:'',...(Array.isArray(limitations)?limitations:[limitations])].filter(Boolean).join(' · ');
-        const facts=[['Revision',data.model_revision],[tx('框架提交','Framework commit'),library.commit],
-          [tx('适用范围','Applicability'),binding?.solution.details.applicability],[tx('验证范围','Verified scope'),evidenceScope]].filter(([,value])=>value);
         return `<article class="lc-scoped-recommendation" data-checkpoint="${esc(data.model)}" data-framework-version="${esc(library.version||'')}">
           <header class="lc-scoped-top"><div><h4>${esc(data.model)}</h4><p class="lc-scoped-version">${esc(version)}</p></div>
             <a class="link" href="${esc(evidence)}">${tx('查看验证证据','View verification evidence')} ↗</a></header>
           <ul class="lc-scoped-conditions" aria-label="${tx('实测条件','Test conditions')}">${conditions.map(value=>`<li>${esc(value)}</li>`).join('')}</ul>
-          ${adaptation.length?`<p class="lc-scoped-adaptation"><b>${tx('适配','Adaptation')}</b> ${esc([...new Set(adaptation)].join(' · '))}</p>`:''}
-          ${facts.length||runtime.length?`<details class="lc-scoped-details"><summary>${tx('验证细节','Verification details')}</summary>
-            ${facts.length?`<dl>${facts.map(([label,value])=>`<div><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`).join('')}</dl>`:''}
-            ${runtime.length?`<dl aria-label="${tx('运行参数','Runtime settings')}">${runtime.map(([name,value])=>`<div><dt><code>${esc(name)}</code></dt><dd><code>${esc(Array.isArray(value)?value.join(', '):value)}</code></dd></div>`).join('')}</dl>`:''}</details>`:''}</article>`;
+          ${adaptation.length?`<p class="lc-scoped-adaptation"><b>${tx('适配','Adaptation')}</b> ${esc([...new Set(adaptation)].join(' · '))}</p>`:''}</article>`;
       }).join('');
       return `<section class="lc-architecture" data-architecture="${esc(architecture)}"><h3>${esc(heading)}</h3>${entries||moduleEmpty(tx('暂无已验证配置','No verified configuration yet'))}</section>`;
     }).join(''):moduleEmpty(tx('暂无已验证配置','No verified configuration yet'));
