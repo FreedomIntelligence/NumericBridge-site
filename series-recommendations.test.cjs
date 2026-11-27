@@ -116,10 +116,14 @@ describe('model series recommendations', { skip: !preview && 'Set NUMERICBRIDGE_
       const card = dense.locator('[data-checkpoint="' + checkpoint + '"][data-framework-version="0.20.0"]');
       await card.waitFor();
       assert.equal(await results.locator('[data-architecture="MoE"]').count(), 0);
-      const facts = await card.locator('dd').allTextContents();
-      for (const value of [/H200/, /推理|Inference/, /Qwen3\.5-9B-Base.*9B/, /68c46c4b3498877f3ef123c856ecfde50c39f404/, /PEFT.*0\.20\.0/, /偏置|bias/i]) {
-        assert.ok(facts.some(fact => value.test(fact)), 'scoped card contains ' + value);
-      }
+      const expanded = card.locator('details');
+      assert.equal(await expanded.getAttribute('open'), null);
+      const summary = await card.innerText();
+      for (const value of [/H200/, /推理|Inference/, /Qwen3\.5-9B-Base/, /PEFT.*0\.20\.0/, /偏置|bias/i]) assert.match(summary, value);
+      assert.doesNotMatch(summary, /68c46c4b3498877f3ef123c856ecfde50c39f404/);
+      await expanded.locator('summary').click();
+      assert.match(await expanded.innerText(), /68c46c4b3498877f3ef123c856ecfde50c39f404/);
+      await expanded.locator('summary').click();
       if (mobile) await assertNoHorizontalOverflow(page, card);
       const evidence = card.getByRole('link');
       const href = await evidence.getAttribute('href');
@@ -153,6 +157,15 @@ describe('model series recommendations', { skip: !preview && 'Set NUMERICBRIDGE_
 
     await visitCases(page, { series: 'Qwen3.8', hardware: 'NVIDIA B200', library: 'vLLM', task: 'inference' });
     await results.locator('[data-checkpoint="Qwen/Qwen3.8-27B"]').first().waitFor();
+
+    await visitCases(page, {series:'Qwen3', hardware:'Ascend 910C', library:'vLLM', task:'inference'});
+    const clean = results.locator('[data-checkpoint="Qwen/Qwen3-1.7B"]').first();
+    await clean.waitFor();
+    assert.equal(await clean.locator('.lc-scoped-adaptation').count(), 0);
+    assert.match(await clean.innerText(), /TP 4/);
+    assert.doesNotMatch(await clean.innerText(), /prefill_budget_tokens/);
+    await clean.locator('summary').click();
+    assert.match(await clean.innerText(), /prefill_budget_tokens/);
 
     await visitCases(page, { ...supported, series: 'Qwen3.5', version: '0.0.0', alternatives: '1' });
     assert.match(await results.locator(empty).first().textContent(), /暂无已验证配置|No verified configuration yet/);
