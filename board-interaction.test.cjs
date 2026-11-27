@@ -182,6 +182,26 @@ test('public board keyboard, history and failure recovery', { skip: !preview, ti
     } finally { await context.close(); }
   });
 
+  await t.test('global navigation stays at the top while desktop and mobile pages scroll', async () => {
+    for (const width of [1440, 390]) {
+      const { page, context, errors } = await open('/', { context: { viewport: { width, height: 840 }, hasTouch: width < 500, isMobile: width < 500 } });
+      try {
+        await page.locator('.home-platforms').waitFor();
+        const header = page.locator('header.site');
+        const start = await header.boundingBox();
+        await page.evaluate(() => window.scrollTo({ top: 620, behavior: 'instant' }));
+        assert.ok(await page.evaluate(() => window.scrollY >= 500));
+        assert.ok(Math.abs((await header.boundingBox()).y - start.y) <= 1);
+        await page.locator('#nav [data-route="how"]').click();
+        await page.locator('#nav [data-route="how"][aria-current="page"]').waitFor();
+        await page.evaluate(() => window.scrollTo({ top: 620, behavior: 'instant' }));
+        assert.ok(await page.evaluate(() => window.scrollY >= 500));
+        assert.ok(Math.abs((await header.boundingBox()).y - start.y) <= 1);
+        assert.deepEqual(errors, []);
+      } finally { await context.close(); }
+    }
+  });
+
   await t.test('changing routes on a narrow touch screen keeps the active navigation item in view', async () => {
     const { page, context, errors } = await open('/', { context: { viewport: { width: 320, height: 840 }, hasTouch: true, isMobile: true } });
     try {
