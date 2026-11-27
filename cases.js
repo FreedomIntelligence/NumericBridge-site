@@ -510,7 +510,7 @@
       <div class="lc-discovery"><aside class="lc-demand" aria-label="${tx('目标配置','Target configuration')}"><div class="lc-demand-head"><h2>${icon('sliders')}${tx('目标配置','Target configuration')}</h2><button type="button" class="btn sm ghost" data-reset>${icon('cycle')}${tx('重置','Reset')}</button></div><div class="lc-selectors"></div></aside>
       <section class="lc-results" aria-label="${tx('配置结果','Configuration results')}"><section class="lc-recommendation" aria-live="polite"></section><section class="lc-problems lc-related"><h2>${tx('相关问题','Related issues')}</h2><div class="lc-module-body"><div class="lc-list"></div></div></section><section class="lc-problems" data-model-records></section></section></div>
       <dialog class="lc-option-dialog" aria-labelledby="lc-option-title"><div class="lc-modal-bar"><h2 id="lc-option-title"></h2><button type="button" class="iconbtn" data-options-close aria-label="${tx('关闭选项','Close options')}">×</button></div><div class="lc-option-body"><label class="lc-option-search"><svg class="lc-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg><span class="sr">${tx('搜索选项','Search options')}</span><input type="search" data-options-search placeholder="${tx('搜索或输入名称','Search or enter a name')}"></label><div class="lc-option-grid" data-options-list></div></div></dialog>
-      <dialog class="lc-case-dialog" aria-labelledby="lc-case-title"><div class="lc-modal-bar"><span>${tx('案例详情','Case detail')}</span><div class="lc-detail-actions"><button class="btn sm" type="button" data-copy>${tx('复制链接','Copy link')}</button><button type="button" class="iconbtn" data-detail-close aria-label="${tx('关闭案例详情','Close case detail')}">×</button></div></div><article class="lc-detail" id="lc-detail"></article></dialog></div>`;
+      <dialog class="lc-case-dialog" aria-labelledby="lc-case-title"><div class="lc-modal-bar"><span>${tx('案例详情','Case detail')}</span><div class="lc-detail-actions"><button class="btn sm" type="button" data-copy>${tx('复制链接','Copy link')}</button><button type="button" class="iconbtn" data-detail-close aria-label="${tx('关闭案例详情','Close case detail')}">×</button></div></div><article class="lc-detail" id="lc-detail"></article></dialog><dialog class="lc-evidence-drawer" aria-labelledby="lc-evidence-title"><div class="lc-modal-bar"><h2 id="lc-evidence-title" tabindex="-1">${tx('实测配置','Tested settings')}</h2><button type="button" class="iconbtn" data-evidence-close aria-label="${tx('关闭配置','Close settings')}">×</button></div><div class="lc-evidence-body" data-evidence-body></div></dialog></div>`;
     const list=root.querySelector('.lc-list'),detail=root.querySelector('.lc-detail'),dialog=root.querySelector('.lc-case-dialog'),optionDialog=root.querySelector('.lc-option-dialog');
     const previewWidths=new WeakMap();
     const previewResize=new ResizeObserver(entries=>{
@@ -523,7 +523,16 @@
     });
     let lastTrigger=null,activeField='',optionReturn=null,detailHash='',closingDetail=false,copyAttempt;
     const heading=root.querySelector('.lc-intro h1');
-    const updateLock=()=>document.body.classList.toggle('locked',dialog.open||optionDialog.open);
+    const evidenceDrawer=root.querySelector('.lc-evidence-drawer');
+    const updateLock=()=>document.body.classList.toggle('locked',dialog.open||optionDialog.open||evidenceDrawer.open);
+    let evidenceTrigger=null;
+    evidenceDrawer.querySelector('[data-evidence-close]').onclick=()=>evidenceDrawer.close();
+    evidenceDrawer.addEventListener('close',()=>{updateLock();if(evidenceTrigger?.isConnected)evidenceTrigger.focus({preventScroll:true});evidenceTrigger=null;});
+    evidenceDrawer.addEventListener('click',event=>{
+      if(event.target!==evidenceDrawer)return;
+      const {left,right,top,bottom}=evidenceDrawer.getBoundingClientRect();
+      if(event.clientX<left||event.clientX>right||event.clientY<top||event.clientY>bottom)evidenceDrawer.close();
+    });
     const caseButtons=()=>[...root.querySelectorAll('[data-case]')];
     const matchingButtons=(id,issue)=>caseButtons().filter(button=>button.dataset.case===id&&(button.dataset.issue||'')===issue);
     const focusVisible=(element,preventScroll=true)=>{
@@ -937,23 +946,40 @@
     const evaluationsPerPage=8;
     let evaluationFilter=history.state?.numericBridgeEvaluation?.filter||'';
     let evaluationPage=evaluationFilter?history.state.numericBridgeEvaluation.page:0;
+    let evidenceRows=[];
+    function openSettings(row,trigger) {
+      const {config,adaptation}=row;
+      const data=config.searchConfig;
+      const facts=entries=>`<dl class="lc-evidence-facts">${entries.map(([label,value])=>`<div><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`).join('')}</dl>`;
+      const section=(title,body)=>body?`<section><h3>${esc(title)}</h3>${body}</section>`:'';
+      const libraries=config.libraries.map(lib=>[lib.name,[lib.version,lib.commit].filter(Boolean).join(' · ')]).filter(([,value])=>value);
+      const settings=runtimeSettings(config.settings);
+      const identity=[[tx('硬件','Hardware'),config.hardware],
+        [tx('参数量','Parameter count'),data.model_size&&data.model_size!=='unknown'?display('model_size',data.model_size):''],['Revision',data.model_revision]].filter(([,value])=>value);
+      const body=evidenceDrawer.querySelector('[data-evidence-body]');
+      body.innerHTML=`<p class="lc-evidence-model">${esc(data.model)}</p>${facts(identity)}
+        ${section(tx('适配','Adaptation'),adaptation.length?`<p>${esc([...new Set(adaptation)].join(' · '))}</p>`:'')}
+        ${section(tx('实测依赖','Tested dependencies'),libraries.length?facts(libraries):'')}
+        ${section(tx('运行参数','Runtime settings'),settings.length?facts(settings):'')}`;
+      evidenceTrigger=trigger;evidenceDrawer.showModal();updateLock();body.scrollTop=0;
+      evidenceDrawer.querySelector('#lc-evidence-title').focus({preventScroll:true});
+    }
     const scopedModule=(groups)=>groups.length?groups.map(({architecture,rows})=>{
       const heading=architecture==='unknown'?tx('架构未记录或无法确认','Architecture not recorded or uncertain'):
         tx(architecture+' 推荐配置',architecture+' recommendations');
-      const entries=rows.map(({c,config,record,library,binding,scope})=>{
+      const entries=rows.map(({config,library,binding,scope})=>{
         const data=config.searchConfig;
         const settings=data.settings||{};
         const framework=canonical('library',library.name);
-        const tasks=(state.task?[state.task]:config.tasks).map(taskLabel).join(' / ');
         const version=[framework,library.version].filter(Boolean).join(' ');
         const size=data.model_size&&!['unknown','tiny'].includes(data.model_size)&&!choiceKey(data.model).includes(choiceKey(data.model_size))?display('model_size',data.model_size):'';
-        const conditions=[config.hardware,tasks,size].filter(Boolean);
+        const conditions=[config.hardware,size].filter(Boolean);
         const intervention=settings.precision_intervention;
         const adaptation=[binding?description('candidate',binding.solution).title:'',binding?scope:'',typeof intervention==='string'?intervention:''].filter(Boolean);
-        const evidence=binding?reportLink(c,'verification',binding.verification.id,state,'',binding.solution.id):reportLink(c,'comparison',record.id,state);
+        const previewId=evidenceRows.push({config,adaptation})-1;
         return `<article class="lc-scoped-recommendation" data-checkpoint="${esc(data.model)}" data-framework-version="${esc(library.version||'')}">
           <header class="lc-scoped-top"><div><h4>${esc(data.model)}</h4><p class="lc-scoped-version">${esc(version)}</p></div>
-            <a class="link" href="${esc(evidence)}">${tx('查看验证证据','View verification evidence')} ↗</a></header>
+            <button type="button" class="link" data-evidence-preview="${previewId}" aria-haspopup="dialog">${tx('查看配置','View settings')} <span aria-hidden="true">→</span></button></header>
           <ul class="lc-scoped-conditions" aria-label="${tx('实测条件','Test conditions')}">${conditions.map(value=>`<li>${esc(value)}</li>`).join('')}</ul>
           ${adaptation.length?`<p class="lc-scoped-adaptation"><b>${tx('适配','Adaptation')}</b> ${esc([...new Set(adaptation)].join(' · '))}</p>`:''}</article>`;
       }).join('');
@@ -964,6 +990,7 @@
       const filterKey=JSON.stringify([...configurationFields,'series'].map(field=>state[field]));
       if(filterKey!==evaluationFilter){evaluationFilter=filterKey;evaluationPage=0;}
       refreshSelectors();
+      evidenceRows=[];
       const grouped=state.series?seriesRecommendations(index,state):null;
       const lookup=grouped?null:retrieve(index,state,{limit:1,allow_alternatives:allowAlternatives});
       const recommendation=grouped?null:recommendConfiguration(index,{...state,allowAlternatives});
@@ -1028,6 +1055,7 @@
         focusVisible(records.querySelector(`[data-evaluation-page="${direction}"]:not(:disabled)`)||records.querySelector('.lc-pagination [role="status"]'));
       });
       root.querySelectorAll('[data-case]').forEach(button=>button.onclick=()=>openCase(index.cases.find(c=>c.row.id===button.dataset.case),button));
+      root.querySelectorAll('[data-evidence-preview]').forEach(button=>button.onclick=()=>openSettings(evidenceRows[Number(button.dataset.evidencePreview)],button));
       if(syncURL)writeURL();
     }
     root.querySelector('[data-reset]').onclick=()=>{resetFilters();evaluationPage=0;state.q='';allowAlternatives=false;showingExample=false;render();};
@@ -1040,6 +1068,14 @@
       else if(retry&&document.activeElement===document.body)focusVisible(heading);
     }
   }
+
+  const runtimeSettings=(value,prefix='')=>Object.entries(value||{}).flatMap(([name,v])=>{
+    if(/sha\d*|checksum|hash|revision|commit|(?:^|_)path(?:$|_)/i.test(name))return [];
+    const label=prefix?`${prefix} / ${name}`:name;
+    if(v&&typeof v==='object'&&!Array.isArray(v))return runtimeSettings(v,label);
+    if(Array.isArray(v))return v.every(item=>['number','string','boolean'].includes(typeof item))?[[label,v.join(', ')]]:[];
+    return v==null?[]:[[label,String(v)]];
+  });
 
   async function mountReport(root,hash,{lang='zh',copyLink}={}) {
     const tx=(zh,en)=>lang==='en'?en:zh;
@@ -1075,15 +1111,8 @@
       const {number,kind}=versionParts({version,commit});
       return [name,number?(kind==='source'?number+' · '+tx('源码','Source'):number):kind==='source'?tx('源码版本','Source build'):version||'—'];
     }));
-    const settings=(value,prefix='')=>Object.entries(value||{}).flatMap(([name,v])=>{
-      if(/sha\d*|checksum|hash|revision|commit|(?:^|_)path(?:$|_)/i.test(name))return [];
-      const label=prefix?`${prefix} / ${name}`:name;
-      if(v&&typeof v==='object'&&!Array.isArray(v))return settings(v,label);
-      if(Array.isArray(v))return v.every(item=>['number','string','boolean'].includes(typeof item))?[[label,v.join(', ')]]:[];
-      return v==null?[]:[[label,String(v)]];
-    });
     const sideCard=side=>{
-      const rows=settings(side.settings);
+      const rows=runtimeSettings(side.settings);
       return `<div class="lc-report-side">${side.label?`<h3>${esc(side.label)}</h3>`:''}${text(side.hardware)}${versions(side)}${rows.length?`<details><summary>${tx('运行参数','Runtime settings')}</summary>${table([tx('参数','Setting'),tx('值','Value')],rows)}</details>`:''}</div>`;
     };
     const sourceFiles=rows=>[...new Set(rows.filter(path=>typeof path==='string'&&/^evidence\/(?:[\w.-]+\/)*[\w.-]+\.(?:md|json|csv)$/i.test(path)&&!path.split('/').some(p=>p==='..'||p==='.')))];

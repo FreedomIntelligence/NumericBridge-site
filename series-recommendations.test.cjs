@@ -118,19 +118,23 @@ describe('model series recommendations', { skip: !preview && 'Set NUMERICBRIDGE_
       assert.equal(await results.locator('[data-architecture="MoE"]').count(), 0);
       assert.equal(await card.locator('details').count(), 0);
       const summary = await card.innerText();
-      for (const value of [/H200/, /推理|Inference/, /Qwen3\.5-9B-Base/, /PEFT.*0\.20\.0/, /偏置|bias/i]) assert.match(summary, value);
+      for (const value of [/H200/, /Qwen3\.5-9B-Base/, /PEFT.*0\.20\.0/, /偏置|bias/i]) assert.match(summary, value);
       assert.doesNotMatch(summary, /68c46c4b3498877f3ef123c856ecfde50c39f404/);
       if (mobile) await assertNoHorizontalOverflow(page, card);
-      const evidence = card.getByRole('link');
-      const href = await evidence.getAttribute('href');
-      assert.ok(href.startsWith('#/report/' + supportedCase + '?'));
-      assert.equal(new URLSearchParams(href.split('?')[1]).get('verification'), 'verification-qwen35-weighted-lora-bias');
-      await evidence.click();
-      await page.locator('#v-report .lc-report-head').waitFor();
-      await page.locator('#v-report article > a').click();
-      await page.locator(detail).waitFor();
-      assert.equal(params(page).get('series'), 'Qwen3.5');
-      assert.equal(params(page).get('solution'), 'solution-qwen35-weighted-lora-bias-local');
+      const trigger = card.getByRole('button',{name:/查看配置|View settings/});
+      assert.equal(await card.locator('.lc-scoped-conditions li').filter({hasText:/^(推理|Inference)$/}).count(), 0);
+      const before = page.url();
+      await trigger.click();
+      const drawer = page.locator('.lc-evidence-drawer[open]');
+      await drawer.waitFor();
+      assert.equal(page.url(), before);
+      assert.match(await drawer.innerText(), /68c46c4b3498877f3ef123c856ecfde50c39f404/);
+      assert.equal(await drawer.getByRole('link').count(), 0);
+      if (mobile) await drawer.locator('[data-evidence-close]').tap();
+      else await page.keyboard.press('Escape');
+      await drawer.waitFor({state:'hidden'});
+      await page.waitForFunction(() => document.activeElement?.hasAttribute('data-evidence-preview'));
+      assert.equal(page.url(), before);
     });
   }
 
@@ -160,11 +164,15 @@ describe('model series recommendations', { skip: !preview && 'Set NUMERICBRIDGE_
     assert.equal(await clean.locator('.lc-scoped-adaptation').count(), 0);
     assert.equal(await clean.locator('details').count(), 0);
     assert.doesNotMatch(await clean.innerText(), /TP 4|prefill_budget_tokens/);
-    await clean.getByRole('link').click();
-    const paramsTable = page.locator('#v-report details').filter({hasText:'tensor_parallel'}).first();
-    await paramsTable.locator('summary').click();
-    assert.match(await paramsTable.innerText(), /tensor_parallel\s*4/);
-    assert.match(await paramsTable.innerText(), /prefill_budget_tokens/);
+    await clean.getByRole('button',{name:/查看配置|View settings/}).click();
+    const drawer = page.locator('.lc-evidence-drawer[open]');
+    await drawer.waitFor();
+    const settings = await drawer.innerText();
+    assert.match(settings, /tensor_parallel\s*4/);
+    assert.match(settings, /prefill_budget_tokens/);
+    assert.match(settings, /torch-npu\s*2\.9\.0\.post2/);
+    assert.match(settings, /CANN\s*9\.1\.0/);
+    assert.doesNotMatch(settings, /B20Z/);
 
     await visitCases(page, { ...supported, series: 'Qwen3.5', version: '0.0.0', alternatives: '1' });
     assert.match(await results.locator(empty).first().textContent(), /暂无已验证配置|No verified configuration yet/);

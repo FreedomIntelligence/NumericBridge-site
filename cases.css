@@ -82,6 +82,17 @@
 #v-cases .lc-scoped-conditions li{padding:1px 6px;border-radius:4px;background:var(--wash);color:var(--muted);font-size:11px;max-width:100%}
 #v-cases .lc-scoped-adaptation{margin-top:8px}
 #v-cases .lc-scoped-adaptation b{font-weight:600;margin-inline-end:4px}
+#v-cases .lc-evidence-drawer{position:fixed;inset:0 0 0 auto;margin:0;width:min(100%,520px);max-width:none;height:100%;height:100dvh;max-height:none;padding:0;background:var(--panel,var(--bg));color:var(--ink);border:0;border-inline-start:1px solid var(--line);box-shadow:-12px 0 32px #0002}
+#v-cases .lc-evidence-drawer[open]{display:flex;flex-direction:column}
+#v-cases .lc-evidence-drawer::backdrop{background:#08080b66}
+#v-cases .lc-evidence-drawer .lc-modal-bar{flex:none}
+#v-cases .lc-evidence-body{padding:18px clamp(14px,4vw,24px) 24px;min-height:0;overflow:auto;overscroll-behavior:contain;overflow-wrap:anywhere}
+#v-cases .lc-evidence-model{font-size:18px;font-weight:650;margin-bottom:10px}
+#v-cases .lc-evidence-body section{border-top:1px solid var(--hair);margin-top:16px;padding-top:12px}
+#v-cases .lc-evidence-body section h3{font-size:14px;margin-bottom:6px}
+#v-cases .lc-evidence-facts div{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,3fr);gap:8px;padding:3px 0;font-size:13px}
+#v-cases .lc-evidence-facts dt{color:var(--muted)}
+#v-cases .lc-scoped-top button.link{padding:0;border:0;background:none;font:inherit;cursor:pointer}
 #v-cases .lc-related .lc-list{border:none}
 #v-cases .lc-pagination{flex:none;margin-top:auto}
 #v-cases .lc-evaluation-page{min-height:0;overflow:auto;scrollbar-width:thin}
