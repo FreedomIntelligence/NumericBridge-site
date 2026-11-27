@@ -118,11 +118,12 @@ describe('model series recommendations', { skip: !preview && 'Set NUMERICBRIDGE_
       assert.equal(await results.locator('[data-architecture="MoE"]').count(), 0);
       assert.equal(await card.locator('details').count(), 0);
       const summary = await card.innerText();
-      for (const value of [/H200/, /Qwen3\.5-9B-Base/, /PEFT.*0\.20\.0/, /偏置|bias/i]) assert.match(summary, value);
+      assert.equal(await card.locator('..').locator('..').getByRole('heading').textContent(), checkpoint);
+      for (const value of [/H200/, /PEFT.*0\.20\.0/, /偏置|bias/i]) assert.match(summary, value);
       assert.doesNotMatch(summary, /68c46c4b3498877f3ef123c856ecfde50c39f404/);
       if (mobile) await assertNoHorizontalOverflow(page, card);
       const trigger = card.getByRole('button',{name:/查看配置|View settings/});
-      assert.equal(await card.locator('.lc-scoped-conditions li').filter({hasText:/^(推理|Inference)$/}).count(), 0);
+      assert.doesNotMatch(summary, /推理|Inference/);
       const before = page.url();
       await trigger.click();
       const drawer = page.locator('.lc-evidence-drawer[open]');
@@ -135,6 +136,26 @@ describe('model series recommendations', { skip: !preview && 'Set NUMERICBRIDGE_
       await drawer.waitFor({state:'hidden'});
       await page.waitForFunction(() => document.activeElement?.hasAttribute('data-evidence-preview'));
       assert.equal(page.url(), before);
+
+      await visitCases(page,{series:'Qwen3',library:'vLLM',task:'inference'});
+      const group=results.locator('.lc-scoped-recommendation').filter({has:page.getByRole('heading',{name:'Qwen/Qwen3-1.7B',exact:true})});
+      await group.waitFor();
+      assert.equal(await group.getByRole('heading').count(),1);
+      if(mobile)await assertNoHorizontalOverflow(page,group);
+      for(const [version,hardware,tp,other] of [['0.18.0+empty','Ascend 910C',4,'NVIDIA B20Z'],['0.24.0','NVIDIA B20Z',2,'Ascend 910C']]){
+        const row=group.locator('[data-framework-version="'+version+'"]');
+        assert.equal(await row.count(),1);
+        assert.ok((await row.innerText()).includes(hardware));
+        assert.ok((await row.innerText()).includes(version));
+        await row.getByRole('button',{name:/查看配置|View settings/}).click();
+        await drawer.waitFor();
+        const settings=await drawer.innerText();
+        assert.ok(settings.includes(hardware));
+        assert.ok(!settings.includes(other));
+        assert.match(settings,new RegExp('tensor_parallel\\s*'+tp));
+        await drawer.locator('[data-evidence-close]').click();
+        await drawer.waitFor({state:'hidden'});
+      }
     });
   }
 

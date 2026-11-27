@@ -975,21 +975,29 @@
     const scopedModule=(groups)=>groups.length?groups.map(({architecture,rows})=>{
       const heading=architecture==='unknown'?tx('架构未记录或无法确认','Architecture not recorded or uncertain'):
         tx(architecture+' 推荐配置',architecture+' recommendations');
-      const entries=rows.map(({config,library,binding,scope})=>{
-        const data=config.searchConfig;
-        const settings=data.settings||{};
-        const framework=canonical('library',library.name);
-        const version=[framework,library.version].filter(Boolean).join(' ');
-        const size=data.model_size&&!['unknown','tiny'].includes(data.model_size)&&!choiceKey(data.model).includes(choiceKey(data.model_size))?display('model_size',data.model_size):'';
-        const conditions=[config.hardware,size].filter(Boolean);
-        const intervention=settings.precision_intervention;
-        const adaptation=[binding?description('candidate',binding.solution).title:'',binding?scope:'',typeof intervention==='string'?intervention:''].filter(Boolean);
-        const previewId=evidenceRows.push({config,adaptation})-1;
-        return `<article class="lc-scoped-recommendation" data-checkpoint="${esc(data.model)}" data-framework-version="${esc(library.version||'')}">
-          <header class="lc-scoped-top"><div><h4>${esc(data.model)}</h4><p class="lc-scoped-version">${esc(version)}</p></div>
-            <button type="button" class="lc-entry-action" data-evidence-preview="${previewId}" aria-haspopup="dialog">${tx('查看配置','View settings')} ${icon('arrow')}</button></header>
-          <ul class="lc-scoped-conditions" aria-label="${tx('实测条件','Test conditions')}">${conditions.map(value=>`<li>${esc(value)}</li>`).join('')}</ul>
-          ${adaptation.length?`<p class="lc-scoped-adaptation"><b>${tx('适配','Adaptation')}</b> ${esc([...new Set(adaptation)].join(' · '))}</p>`:''}</article>`;
+      const byCheckpoint=new Map();
+      for(const row of rows){
+        const name=row.config.searchConfig.model;
+        if(!byCheckpoint.has(name))byCheckpoint.set(name,[]);
+        byCheckpoint.get(name).push(row);
+      }
+      const entries=[...byCheckpoint].map(([checkpoint,configs])=>{
+        const tested=configs.map(({config,library,binding,scope})=>{
+          const data=config.searchConfig;
+          const framework=canonical('library',library.name);
+          const version=[framework,library.version].filter(Boolean).join(' ');
+          const size=data.model_size&&!['unknown','tiny'].includes(data.model_size)&&!choiceKey(checkpoint).includes(choiceKey(data.model_size))?display('model_size',data.model_size):'';
+          const intervention=data.settings?.precision_intervention;
+          const adaptation=[binding?description('candidate',binding.solution).title:'',binding?scope:'',typeof intervention==='string'?intervention:''].filter(Boolean);
+          const previewId=evidenceRows.push({config,adaptation})-1;
+          const label=tx('查看配置','View settings');
+          return `<li class="lc-scoped-config" data-checkpoint="${esc(checkpoint)}" data-framework-version="${esc(library.version||'')}">
+            <div class="lc-scoped-top"><div class="lc-scoped-stack">
+              <span class="lc-scoped-hardware">${esc(config.hardware)}${size?' · '+esc(size):''}</span><span class="lc-scoped-version">${esc(version)}</span></div>
+              <button type="button" class="lc-entry-action" data-evidence-preview="${previewId}" aria-haspopup="dialog" aria-label="${esc([label,config.hardware,version].filter(Boolean).join(' · '))}">${label} ${icon('arrow')}</button></div>
+            ${adaptation.length?`<p class="lc-scoped-adaptation"><b>${tx('适配','Adaptation')}</b> ${esc([...new Set(adaptation)].join(' · '))}</p>`:''}</li>`;
+        }).join('');
+        return `<article class="lc-scoped-recommendation"><h4>${esc(checkpoint)}</h4><ul class="lc-scoped-configs">${tested}</ul></article>`;
       }).join('');
       return `<section class="lc-architecture" data-architecture="${esc(architecture)}"><h3>${esc(heading)}</h3>${entries||moduleEmpty(tx('暂无已验证配置','No verified configuration yet'))}</section>`;
     }).join(''):moduleEmpty(tx('暂无已验证配置','No verified configuration yet'));
