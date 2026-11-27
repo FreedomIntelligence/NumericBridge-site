@@ -316,7 +316,7 @@
   // Only reuse recommendation entries explicitly compiled for the matched configuration.
   // A series is a discovery filter, never a new scope for an evidence claim.
   function seriesRecommendations(index,filters) {
-    const groups=new Map();
+    const groups=new Map(),unknownCheckpoints=new Set();
     const canonical=name=>index.search.aliases.library[choiceKey(name)]||name;
     for(const c of index.cases){
       if(c.category==='workflow-benchmark')continue;
@@ -325,6 +325,7 @@
         if(!metadata||!configurationMatches(config,{...filters,model:''}))continue;
         const type=config.type==='dense'?'Dense':config.type==='moe'?'MoE':'';
         const base=type||'unknown';
+        if(!type&&metadata.model)unknownCheckpoints.add(metadata.model);
         const exactFrameworks=new Set(metadata.frameworks.map(canonical));
         const libraries=config.libraries.filter(lib=>exactFrameworks.has(canonical(lib.name))&&
           (!filters.library||canonical(lib.name)===canonical(filters.library))&&(!filters.version||lib.version===filters.version));
@@ -356,7 +357,7 @@
       }
     }
     return [...groups].sort(([a],[b])=>a==='unknown'?1:b==='unknown'?-1:a.localeCompare(b))
-      .map(([architecture,rows])=>({architecture,rows:[...rows.values()].sort((a,b)=>
+      .map(([architecture,rows])=>({architecture,checkpoints:architecture==='unknown'?[...unknownCheckpoints]:[],rows:[...rows.values()].sort((a,b)=>
         Number(!!b.binding)-Number(!!a.binding)||(b.record.date||'').localeCompare(a.record.date||'')||a.record.id.localeCompare(b.record.id))}));
   }
   const verificationBindings=(index,c)=>{
@@ -975,13 +976,14 @@
       evidenceDrawer.querySelector('#lc-evidence-title').focus({preventScroll:true});
     }
     function scopedModule(groups) {
-      const choices=groups.flatMap(({architecture,rows})=>{
+      const choices=groups.flatMap(({architecture,rows,checkpoints})=>{
         const models=new Map();
         for(const row of rows){
           const name=row.config.searchConfig.model;
           if(!models.has(name))models.set(name,[]);
           models.get(name).push(row);
         }
+        for(const checkpoint of checkpoints)if(!models.has(checkpoint))models.set(checkpoint,[]);
         return models.size?[...models].map(([checkpoint,configs])=>({architecture,checkpoint,configs})):[{architecture,checkpoint:'',configs:[]}];
       }).sort((a,b)=>Number(!!b.configs.length)-Number(!!a.configs.length));
       if(!choices.length)return moduleEmpty(tx('暂无已验证配置','No verified configuration yet'));
@@ -1012,12 +1014,12 @@
             ${adaptation.length?`<p class="lc-scoped-adaptation"><b>${tx('适配','Adaptation')}</b> ${esc([...new Set(adaptation)].join(' · '))}</p>`:''}</li>`;
         }).join('');
         const heading=architectureHeading(architecture);
-        const entry=checkpoint?`<article class="lc-scoped-recommendation"><h4>${esc(checkpoint)}</h4><ul class="lc-scoped-configs">${tested}</ul></article>`:moduleEmpty(tx('暂无已验证配置','No verified configuration yet'));
+        const entry=configs.length?`<article class="lc-scoped-recommendation"><h4>${esc(checkpoint)}</h4><ul class="lc-scoped-configs">${tested}</ul></article>`:`${checkpoint?`<p class="lc-architecture-checkpoint">${esc(checkpoint)}</p>`:''}${moduleEmpty(tx('暂无已验证配置','No verified configuration yet'))}`;
         return `<div class="lc-rec-panel" id="lc-rec-panel-${i}"${tabs?` role="tabpanel" aria-labelledby="lc-rec-tab-${i}"`:''} tabindex="0"${i===selected?'':' hidden'}><section class="lc-architecture" data-architecture="${esc(architecture)}"><h3>${esc(heading)}</h3>${entry}</section></div>`;
       }).join('');
       return tabs+panels;
     }
-    const architectureHeading=architecture=>architecture==='unknown'?tx('架构未记录或无法确认','Architecture not recorded or uncertain'):tx(architecture+' 推荐配置',architecture+' recommendations');
+    const architectureHeading=architecture=>architecture==='unknown'?tx('架构未标注','Architecture not labeled'):tx(architecture+' 推荐配置',architecture+' recommendations');
     const moduleEmpty=text=>`<p class="lc-module-empty">${esc(text)}</p>`;
     function render(syncURL=true) {
       const filterKey=JSON.stringify([...configurationFields,'series'].map(field=>state[field]));

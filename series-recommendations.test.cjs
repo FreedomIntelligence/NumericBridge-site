@@ -176,7 +176,7 @@ describe('model series recommendations', { skip: !preview && 'Set NUMERICBRIDGE_
     const results=page.locator(recommendation);
     const tabs=results.getByRole('tab');
     await tabs.first().waitFor();
-    assert.equal(await tabs.count(),2);
+    assert.ok(await tabs.count()>=2);
     assert.equal(await results.getByRole('tabpanel').count(),1);
     const first=await results.getByRole('tabpanel').getByRole('heading',{level:4}).innerText();
     await tabs.nth(1).tap();
@@ -198,6 +198,14 @@ describe('model series recommendations', { skip: !preview && 'Set NUMERICBRIDGE_
     assert.match(await moe.locator(empty).textContent(), /暂无已验证配置|No verified configuration yet/);
     assert.equal(await results.locator('[data-architecture="Dense"], [data-checkpoint], a').count(), 0);
     await page.locator('[data-model-records] a[href^="#/report/' + moeCase + '?"]').first().waitFor();
+
+    await visitCases(page,{series:'Qwen3.8'});
+    const flash=results.getByRole('tab',{name:/Qwen3\.8-Flash-Next/});
+    await flash.click();
+    const flashPanel=results.getByRole('tabpanel');
+    assert.match(await flashPanel.innerText(),/架构未标注|Architecture not labeled/);
+    assert.match(await flashPanel.innerText(),/暂无已验证配置|No verified configuration yet/);
+    assert.equal(await flashPanel.locator('[data-checkpoint]').count(),0);
 
     // The catalog has a Qwen3.8 checkpoint stored under a legacy Qwen3.5 Dense group.
     // Its passing B200/vLLM evidence must not surface for the Qwen3.5 series.

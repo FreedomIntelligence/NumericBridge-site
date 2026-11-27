@@ -78,6 +78,7 @@
 #v-cases .lc-architecture{padding:4px 2px 10px}
 #v-cases .lc-architecture + .lc-architecture{border-top:1px solid var(--line);padding-top:10px}
 #v-cases .lc-architecture>h3{font-size:14px;font-weight:600;margin:0 0 8px}
+#v-cases .lc-architecture-checkpoint{font-size:13px;font-weight:600}
 #v-cases .lc-scoped-recommendation{padding:10px 12px;border:1px solid var(--line);border-radius:7px;font-size:12px;overflow-wrap:anywhere}
 #v-cases .lc-scoped-recommendation+.lc-scoped-recommendation{margin-top:8px}
 #v-cases .lc-scoped-recommendation h4{font-size:14px;font-weight:650;line-height:1.4;margin-bottom:5px}
