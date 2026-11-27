@@ -146,7 +146,7 @@ describe('model series recommendations', { skip: !preview && 'Set NUMERICBRIDGE_
     await moe.locator(empty).waitFor();
     assert.match(await moe.locator(empty).textContent(), /暂无已验证配置|No verified configuration yet/);
     assert.equal(await results.locator('[data-architecture="Dense"], [data-checkpoint], a').count(), 0);
-    await page.locator('[data-model-records] button[data-case="' + moeCase + '"]').first().waitFor();
+    await page.locator('[data-model-records] a[href^="#/report/' + moeCase + '?"]').first().waitFor();
 
     // The catalog has a Qwen3.8 checkpoint stored under a legacy Qwen3.5 Dense group.
     // Its passing B200/vLLM evidence must not surface for the Qwen3.5 series.

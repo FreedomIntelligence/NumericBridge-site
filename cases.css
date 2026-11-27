@@ -50,16 +50,10 @@
 #v-cases .lc-option-group{border-top:1px solid var(--hair);margin-top:16px;padding-top:14px}
 #v-cases .lc-option-group h3{font-size:12px;font-weight:600;line-height:1.4;margin:0 0 8px;color:var(--ink)}
 #v-cases .lc-evaluation-links{list-style:none;padding:0;margin:0}
-#v-cases .lc-evaluation-links li{padding:10px 0;border-bottom:1px solid var(--hair);display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 12px;align-items:center;overflow-wrap:anywhere}
-#v-cases .lc-evaluation-links li>span{grid-column:1}
-#v-cases .lc-evaluation-links li>a{grid-column:2;grid-row:1 / span 2;font-size:12px;white-space:nowrap}
 #v-cases .lc-evaluation-page.lc-multipage{height:25rem;overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable}
 #v-cases .lc-pagination{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;padding-top:10px;border-top:1px solid var(--hair)}
 #v-cases .lc-pagination [role=status]{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
 #v-cases .lc-count{color:var(--muted);font-size:11px;border:1px solid var(--line);border-radius:100px;padding:1px 7px}
-@media(max-width:540px){#v-cases .lc-evaluation-links li{grid-template-columns:minmax(0,1fr)}#v-cases .lc-evaluation-links li>a{grid-column:1;grid-row:auto;justify-self:start}}
-#v-cases .lc-evaluation-links button{text-align:left;justify-self:start}
-#v-cases .lc-evaluation-links span{color:var(--muted);font-size:11px}
 #v-cases .lc-option-grid .lc-choice:focus-visible{outline:2px solid var(--ink);outline-offset:1px}
 #v-cases .lc-results{min-width:0;display:grid;gap:14px}
 #v-cases .lc-results>section{min-width:0;min-height:0;display:flex;flex-direction:column;margin:0;padding:12px 15px;border:1px solid var(--line);border-radius:8px;background:var(--paper)}
@@ -92,7 +86,18 @@
 #v-cases .lc-evidence-body section h3{font-size:14px;margin-bottom:6px}
 #v-cases .lc-evidence-facts div{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,3fr);gap:8px;padding:3px 0;font-size:13px}
 #v-cases .lc-evidence-facts dt{color:var(--muted)}
-#v-cases .lc-scoped-top button.link{padding:0;border:0;background:none;font:inherit;cursor:pointer}
+#v-cases .lc-evaluation-links{display:grid;gap:5px}
+#v-cases .lc-evaluation-entry{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:9px;padding:7px;border:1px solid var(--hair);border-radius:8px;color:var(--ink);text-decoration:none;overflow-wrap:anywhere}
+#v-cases .lc-evaluation-entry:hover{border-color:var(--line);background:var(--wash)}
+#v-cases .lc-evaluation-mark{display:grid;place-items:center;width:28px;height:28px;border-radius:6px;background:var(--wash);color:var(--muted)}
+#v-cases .lc-evaluation-mark .ico,:is(#v-cases,#v-report) .lc-entry-action .ico{width:14px;height:14px;flex:none}
+#v-cases .lc-evaluation-copy{display:grid;gap:2px}
+#v-cases .lc-evaluation-copy strong{font-size:12px;line-height:1.35;font-weight:600}
+#v-cases .lc-evaluation-copy small{font-size:11px;color:var(--muted)}
+:is(#v-cases,#v-report) .lc-entry-action{display:inline-flex;align-items:center;justify-content:center;gap:5px;min-height:28px;padding:3px 8px;border:1px solid var(--line);border-radius:6px;background:var(--wash);color:var(--ink);font-family:inherit;font-size:11px;font-weight:600;line-height:1.45;text-decoration:none;cursor:pointer}
+:is(#v-cases,#v-report) .lc-entry-action:is(button,a):hover,#v-cases .lc-evaluation-entry:hover .lc-entry-action{border-color:var(--muted);background:var(--bg)}
+#v-cases .lc-evaluation-entry .lc-entry-action{white-space:nowrap}
+@media(max-width:520px){#v-cases .lc-evaluation-entry{gap:6px;padding:6px}#v-cases .lc-evaluation-entry .lc-entry-action{padding-inline:5px}#v-cases .lc-evaluation-mark{width:24px;height:24px}}
 #v-cases .lc-related .lc-list{border:none}
 #v-cases .lc-pagination{flex:none;margin-top:auto}
 #v-cases .lc-evaluation-page{min-height:0;overflow:auto;scrollbar-width:thin}
@@ -109,7 +114,6 @@
 #v-cases .lc-recommend-config dt{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);margin-bottom:4px}
 #v-cases .lc-recommend-config dd{font-size:13px;font-weight:500;overflow-wrap:anywhere}
 #v-cases .lc-version-change{font-size:12px;color:var(--red);margin:-6px 0 20px;overflow-wrap:anywhere}
-#v-cases .lc-detail-link{font-size:11px;color:var(--red)}
 #v-cases .lc-stack{margin:15px 0 0;font-size:12px;overflow-wrap:anywhere}
 #v-cases .lc-stack h4{font-size:12px;font-weight:600;margin-bottom:8px}
 #v-cases .lc-stack .lc-recommend-config{grid-template-columns:repeat(auto-fit,minmax(min(118px,100%),1fr));gap:8px 14px;border:0;border-radius:6px;background:var(--wash);padding:10px 12px}

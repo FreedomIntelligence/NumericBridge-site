@@ -176,11 +176,8 @@ describe('public cases interactions', { skip: !preview && 'Set NUMERICBRIDGE_PRE
     assert.deepEqual(history, history.slice().sort((a, b) => b.date.localeCompare(a.date) || a.id.localeCompare(b.id)));
 
     const first = history[0];
-    await rows.first().getByRole('button').press('Enter');
-    await focused(page, '#lc-case-title');
-    const link = page.locator(detail + ' .lc-report-links a[href="' + first.href + '"]');
-    assert.equal(await link.locator('..').locator('time').count(), 0);
-    await link.press('Enter');
+    assert.equal(await rows.first().getByRole('link').count(), 1);
+    await rows.first().getByRole('link').press('Enter');
     const reportMeta = page.locator('#v-report .lc-report-head h1 + p');
     await reportMeta.waitFor();
     assert.ok((await reportMeta.textContent()).endsWith(first.date));
@@ -320,10 +317,14 @@ describe('public cases interactions', { skip: !preview && 'Set NUMERICBRIDGE_PRE
     await aligned();
     assert.ok(await prev.isEnabled());
     const secondPage = await rows.allTextContents();
-    await rows.first().getByRole('button').press('Enter');
-    await focused(page, '#lc-case-title');
-    await page.goBack();
-    await page.locator(detail).waitFor({state:'detached'});
+    const entry = rows.first().getByRole('link');
+    await entry.press('Enter');
+    await page.locator('#v-report .lc-report-head').waitFor();
+    const back = page.locator('#v-report .lc-report-back');
+    assert.match(await back.textContent(), /返回评测记录/);
+    await back.press('Enter');
+    await page.waitForFunction(() => document.activeElement?.hasAttribute('data-evaluation-detail'));
+    assert.equal(await page.locator(detail).count(), 0);
     assert.deepEqual(await rows.allTextContents(), secondPage);
     await prev.press('Enter');
     assert.deepEqual(await rows.allTextContents(), firstPage);
@@ -332,6 +333,12 @@ describe('public cases interactions', { skip: !preview && 'Set NUMERICBRIDGE_PRE
     await aligned();
     await page.setViewportSize({width:390,height:850});
     assert.ok((await issues.boundingBox()).y < (await records.boundingBox()).y);
+    assert.equal(await rows.first().getByRole('link').count(), 1);
+    await rows.first().getByRole('link').click();
+    await page.locator('#v-report .lc-report-head').waitFor();
+    await page.locator('#v-report .lc-report-back').click();
+    await rows.first().waitFor();
+    assert.deepEqual(await rows.allTextContents(), firstPage);
     await next.press('Enter');
     await page.locator('[data-reset]').press('Enter');
     assert.deepEqual([...params(page)], [['library', 'vLLM']]);

@@ -303,6 +303,12 @@
     for(const field of [...configurationFields,'series'])if(filters[field])params.set(field,filters[field]);
     if(filters.allowAlternatives)params.set('alternatives','1');
     if(filters.showingExample)params.set('example','1');
+    if(Number.isSafeInteger(filters.evaluationPage)){
+      params.set('from','evaluations');
+      if(!filters.library)params.set('library','');
+      params.set('page',filters.evaluationPage+1);
+      if(filters.category)params.set('category',filters.category);
+    }
     if(issue)params.set('issue',issue);
     if(solution)params.set('solution',solution);
     return `#/report/${encodeURIComponent(c.row.id)}?${params}`;
@@ -871,7 +877,7 @@
         const status=checks.some(v=>failedVerifications.has(v.id))?tx('部分实测结果暂不可用','Some measured results are unavailable'):
           !results?(checks.length&&pending?tx('正在读取结果…','Loading results…'):
             outcomes.has('not-runtime-tested')?verificationLabels['not-runtime-tested']:tx('暂无实测指标','No measured metrics available')):'';
-        const reports=checks.map((check,i)=>`<a class="link" href="${esc(reportLink(c,'verification',check.id,reportFilters,issueId,solution.id))}">${tx('查看复验报告','View verification report')}${checks.length>1?` ${i+1}`:''} ↗</a>`).join('');
+        const reports=checks.map((check,i)=>`<a class="lc-entry-action" href="${esc(reportLink(c,'verification',check.id,reportFilters,issueId,solution.id))}">${tx('查看复验明细','View verification details')}${checks.length>1?` ${i+1}`:''} ${icon('arrow')}</a>`).join('');
         return {
           header:`<div class="lc-solution-head"><h4 id="lc-selected-solution">${esc(title)}</h4>${reports}</div>`,
           evidence:results+(status?`<p class="lc-solution-action" role="status">${status}</p>`:'')
@@ -892,7 +898,7 @@
       const copy=description(focused?'issue':'case',focused?.issue||row);
       const comparisons=focused?[]:c.observations.filter(o=>o.kind==='comparison').sort(compareEvaluations);
       const summaries=!solutionRows.length&&!issues.length?[...new Set(comparisons.map(({record})=>description('comparison',record).summary||record.summary).filter(text=>text&&text!==copy.summary))]:[];
-      const comparisonLinks=comparisons.map(({record})=>`<li><a class="link" href="${esc(reportLink(c,'comparison',record.id,reportFilters))}">${esc(description('comparison',record).title)} ↗</a></li>`).join('');
+      const comparisonLinks=comparisons.map(({record})=>`<li><a class="lc-entry-action" href="${esc(reportLink(c,'comparison',record.id,reportFilters))}">${esc(description('comparison',record).title)} ${icon('arrow')}</a></li>`).join('');
       const result=summaries.length||comparisonLinks?`<section class="lc-section"><h3>${tx('评测结果','Evaluation results')}</h3>${summaries.map(text=>`<p>${esc(text)}</p>`).join('')}${comparisonLinks?`<ul class="lc-report-links">${comparisonLinks}</ul>`:''}</section>`:'';
       const issueSection=issues.length?`<section class="lc-section"><h3><span>${tx('问题','Issues')}</span></h3>${issues.map(issue=>{
         const text=description('issue',issue),r=resolutionRows.find(row=>row.issue.id===issue.id);
@@ -944,8 +950,10 @@
       list.querySelectorAll('[data-case]').forEach(b=>b.setAttribute('aria-expanded',String(b.dataset.case===selected&&b.dataset.issue===selectedIssue)));
     }
     const evaluationsPerPage=8;
-    let evaluationFilter=history.state?.numericBridgeEvaluation?.filter||'';
-    let evaluationPage=evaluationFilter?history.state.numericBridgeEvaluation.page:0;
+    const returnedPage=Number(hash.q.get('evaluation_page'));
+    const fromEvaluation=Number.isSafeInteger(returnedPage)&&returnedPage>0;
+    let evaluationFilter=fromEvaluation?JSON.stringify([...configurationFields,'series'].map(field=>state[field])):history.state?.numericBridgeEvaluation?.filter||'';
+    let evaluationPage=fromEvaluation?returnedPage-1:evaluationFilter?history.state.numericBridgeEvaluation.page:0;
     let evidenceRows=[];
     function openSettings(row,trigger) {
       const {config,adaptation}=row;
@@ -979,7 +987,7 @@
         const previewId=evidenceRows.push({config,adaptation})-1;
         return `<article class="lc-scoped-recommendation" data-checkpoint="${esc(data.model)}" data-framework-version="${esc(library.version||'')}">
           <header class="lc-scoped-top"><div><h4>${esc(data.model)}</h4><p class="lc-scoped-version">${esc(version)}</p></div>
-            <button type="button" class="link" data-evidence-preview="${previewId}" aria-haspopup="dialog">${tx('查看配置','View settings')} <span aria-hidden="true">→</span></button></header>
+            <button type="button" class="lc-entry-action" data-evidence-preview="${previewId}" aria-haspopup="dialog">${tx('查看配置','View settings')} ${icon('arrow')}</button></header>
           <ul class="lc-scoped-conditions" aria-label="${tx('实测条件','Test conditions')}">${conditions.map(value=>`<li>${esc(value)}</li>`).join('')}</ul>
           ${adaptation.length?`<p class="lc-scoped-adaptation"><b>${tx('适配','Adaptation')}</b> ${esc([...new Set(adaptation)].join(' · '))}</p>`:''}</article>`;
       }).join('');
@@ -1000,7 +1008,7 @@
       section.innerHTML=`<h2 id="lc-recommendation-title">${tx('推荐配置','Recommended configuration')}${showingExample?` <span class="lc-badge" data-example-label>${tx('示例','Example')}</span>`:''}</h2><div class="lc-module-body"${grouped?' tabindex="0" aria-labelledby="lc-recommendation-title" role="region"':''}>`+(grouped?scopedModule(grouped):recommendation?(()=>{
         const {case:c,config,library,solution}=recommendation;
         const version=libraryVersion(library),requested=requestedVersion(state.version);
-        const details=solution?'':`<button class="link lc-detail-link" type="button" data-case="${esc(c.row.id)}" aria-haspopup="dialog">${tx('配置与验证详情','Configuration & verification')} ↗</button>`;
+        const details=solution?'':`<button class="lc-entry-action" type="button" data-case="${esc(c.row.id)}" aria-haspopup="dialog">${tx('配置与验证详情','Configuration & verification')} ${icon('arrow')}</button>`;
         return `<div class="lc-recommend-head"><h3>${esc(library.name)}${version?` <span class="lc-recommend-version">${esc(version)}</span>`:''}${solution?` <span class="lc-recommend-patch">${icon('wrench')}${tx('本地修复','local fix')}</span>`:''}</h3>${details}</div>
           ${recommendation.differences.includes('version')?`<p class="lc-version-change">${version&&version!==requested?`${tx('版本调整','Version change')}: ${esc(requested)} → ${esc(version)}`:tx('已显示其他版本的记录','Showing records for a different version')}</p>`:''}
           <dl class="lc-recommend-config"><div><dt>${icon('chip')}${tx('硬件','Hardware')}</dt><dd title="${esc(config.hardware)}">${esc(state.hardware)}</dd></div><div><dt>${icon('layers')}${tx('实测模型','Tested model')}</dt><dd>${esc(config.model)}</dd></div><div><dt>${icon('target')}${tx('任务','Task')}</dt><dd>${esc(taskLabel(state.task||config.tasks[0]||tx('未记录','Not recorded')))}</dd></div></dl>
@@ -1033,7 +1041,10 @@
       }).sort(compareEvaluations);
       const evaluationList=items=>items.length?`<ul class="lc-evaluation-links">${items.map(({c,config,record})=>{
         const size=config.searchConfig.model_size;
-        return `<li><button class="link" type="button" data-case="${esc(c.row.id)}" aria-haspopup="dialog">${esc(description('comparison',record).title)}</button><span>${esc(config.model)}${size==='unknown'||(size!=='tiny'&&choiceKey(config.model).includes(choiceKey(size)))?'':' · '+esc(display('model_size',size))}</span><a class="link" href="${esc(reportLink(c,'comparison',record.id,state))}">${tx('实测报告','Measured report')} ↗</a></li>`;
+        const title=description('comparison',record).title;
+        const model=esc(config.model)+(size==='unknown'||(size!=='tiny'&&choiceKey(config.model).includes(choiceKey(size)))?'':' · '+esc(display('model_size',size)));
+        const href=reportLink(c,'comparison',record.id,{...state,allowAlternatives,showingExample,evaluationPage});
+        return `<li><a class="lc-evaluation-entry" data-evaluation-detail="${esc(record.id)}" href="${esc(href)}"><span class="lc-evaluation-mark">${icon('book')}</span><span class="lc-evaluation-copy"><strong>${esc(title)}</strong><small>${model}</small></span><span class="lc-entry-action"><span>${tx('查看明细','View details')}</span>${icon('arrow')}</span></a></li>`;
       }).join('')}</ul>`:'';
       const tiny=evaluations.filter(({config})=>config.searchConfig.model_size==='tiny');
       const primary=evaluations.filter(({config})=>config.searchConfig.model_size!=='tiny');
@@ -1064,7 +1075,9 @@
     if(requestedCase)openCase(requestedCase,null,requestedIssue,hash.q.get('solution'));
     else {
       caseReturn=null;writeURL();
-      if(returnFocus?.hash===mountHash)focusCaseReturn(returnFocus);
+      const evaluationId=hash.q.get('evaluation_focus');
+      if(fromEvaluation&&evaluationId)focusVisible([...root.querySelectorAll('[data-evaluation-detail]')].find(el=>el.dataset.evaluationDetail===evaluationId)||heading);
+      else if(returnFocus?.hash===mountHash)focusCaseReturn(returnFocus);
       else if(retry&&document.activeElement===document.body)focusVisible(heading);
     }
   }
@@ -1081,18 +1094,25 @@
     const tx=(zh,en)=>lang==='en'?en:zh;
     const request={};root._reportRequest=request;
     const active=()=>root._reportRequest===request&&!root.hidden;
+    const comparisonId=hash.q.get('comparison'),verificationId=hash.q.get('verification');
+    const fromList=!!comparisonId&&hash.q.get('from')==='evaluations';
     const backParams=new URLSearchParams();
-    for(const field of [...configurationFields,'series','alternatives','example','issue','solution'])if(hash.q.get(field))backParams.set(field,hash.q.get(field));
-    const back=hash.arg?`#/cases/${encodeURIComponent(hash.arg)}${backParams.size?'?'+backParams:''}`:'#/cases';
-    const backLink=`<a class="link" href="${esc(back)}">← ${tx('返回案例','Back to case')}</a>`;
+    const fields=[...configurationFields,'series','alternatives','example',...(fromList?['category']:['issue','solution'])];
+    for(const field of fields)if(hash.q.get(field)||fromList&&field==='library'&&hash.q.has(field))backParams.set(field,hash.q.get(field));
+    if(fromList){
+      const page=Number(hash.q.get('page'));
+      if(Number.isSafeInteger(page)&&page>0)backParams.set('evaluation_page',page);
+      backParams.set('evaluation_focus',comparisonId);
+    }
+    const back=`#/cases${!fromList&&hash.arg?'/'+encodeURIComponent(hash.arg):''}${backParams.size?'?'+backParams:''}`;
+    const backLink=`<a class="lc-entry-action lc-report-back" href="${esc(back)}"><span aria-hidden="true">←</span> ${fromList?tx('返回评测记录','Back to evaluations'):tx('返回案例详情','Back to case detail')}</a>`;
     const paint=html=>{if(active())root.innerHTML=`<article class="wrap lc-report">${backLink}${html}</article>`;};
-    const noReport=()=>paint(`<h1>${tx('未找到实测报告','Measured report not found')}</h1>`);
-    paint(`<p role="status">${tx('正在读取实测报告…','Loading measured report…')}</p>`);
+    const noReport=()=>paint(`<h1>${tx('未找到记录明细','Record details not found')}</h1>`);
+    paint(`<p role="status">${tx('正在读取明细…','Loading details…')}</p>`);
     let index;
     try{index=await loadIndex();}catch{if(active())paint(`<h1>${tx('无法读取实测报告','Unable to load the measured report')}</h1>`);return;}
     if(!active())return;
     const c=index.cases.find(({row})=>row.id===hash.arg);
-    const comparisonId=hash.q.get('comparison'),verificationId=hash.q.get('verification');
     if(!c||Boolean(comparisonId)===Boolean(verificationId))return noReport();
     const comparison=comparisonId&&c.observations.find(o=>o.kind==='comparison'&&o.record.id===comparisonId)?.record;
     const bindings=verificationId?verificationBindings(index,c):[];
@@ -1171,7 +1191,7 @@
         scope:verification.scope,workloads:workloads.map(w=>w.scope),environments:environments.map(r=>r.environment),results:groups,checks,coverage:covered,workload_coverage:workloadCoverage,limitations:limits};
     }
     if(!active())return;
-    paint(`<header class="lc-report-head"><p class="eyebrow">${tx('实测报告','Measured Report')}</p><h1>${esc(title)}</h1><p>${meta.filter(Boolean).map(esc).join(' · ')}</p><div class="lc-report-actions"><button class="btn sm" type="button" data-report-copy>${tx('复制链接','Copy link')}</button><button class="btn sm" type="button" data-report-export>${tx('导出 JSON','Export JSON')}</button></div></header>${body}`);
+    paint(`<header class="lc-report-head"><p class="eyebrow">${(comparison?tx('评测明细','Evaluation details'):tx('复验明细','Verification details'))}</p><h1>${esc(title)}</h1><p>${meta.filter(Boolean).map(esc).join(' · ')}</p><div class="lc-report-actions"><button class="btn sm" type="button" data-report-copy>${tx('复制链接','Copy link')}</button><button class="btn sm" type="button" data-report-export>${tx('导出 JSON','Export JSON')}</button></div></header>${body}`);
     root.querySelector('[data-report-copy]').onclick=e=>copyLink?.(global.location.href,e.currentTarget);
     root.querySelector('[data-report-export]').onclick=()=>{
       const url=URL.createObjectURL(new Blob([JSON.stringify(exportData,null,2)+'\n'],{type:'application/json'}));
