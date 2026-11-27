@@ -146,7 +146,7 @@ describe('model series recommendations', { skip: !preview && 'Set NUMERICBRIDGE_
       for(const [version,hardware,tp,other] of [['0.18.0+empty','Ascend 910C',4,'NVIDIA B20Z'],['0.24.0','NVIDIA B20Z',2,'Ascend 910C']]){
         const row=group.locator('[data-framework-version="'+version+'"]');
         assert.equal(await row.count(),1);
-        assert.ok((await row.innerText()).includes(hardware));
+        assert.equal(await row.locator('.lc-scoped-hardware').innerText(),hardware);
         assert.ok((await row.innerText()).includes(version));
         const deps=await row.locator('.lc-scoped-dependencies li').allTextContents();
         if(tp===4){
@@ -161,7 +161,7 @@ describe('model series recommendations', { skip: !preview && 'Set NUMERICBRIDGE_
         await row.getByRole('button',{name:/查看配置|View settings/}).click();
         await drawer.waitFor();
         const settings=await drawer.innerText();
-        assert.ok(settings.includes(hardware));
+        assert.ok(settings.includes(tp+' × '+hardware));
         assert.ok(!settings.includes(other));
         assert.match(settings,new RegExp('tensor_parallel\\s*'+tp));
         await drawer.locator('[data-evidence-close]').click();

@@ -1003,9 +1003,10 @@
           const adaptation=[binding?description('candidate',binding.solution).title:'',binding?scope:'',typeof intervention==='string'?intervention:''].filter(Boolean);
           const previewId=evidenceRows.push({config,adaptation})-1;
           const label=tx('查看配置','View settings');
+          const hardwareLabel=config.hardware.replace(/^\s*\d+\s*(?:×\s*|x\s+|张\s*|块\s*|卡\s+)/i,'').trim()||config.hardware;
           return `<li class="lc-scoped-config" data-checkpoint="${esc(checkpoint)}" data-framework-version="${esc(library.version||'')}">
             <div class="lc-scoped-top"><div class="lc-scoped-stack">
-              <span class="lc-scoped-hardware">${esc(config.hardware)}${size?' · '+esc(size):''}</span><span class="lc-scoped-version">${esc(version)}</span></div>
+              <span class="lc-scoped-hardware">${esc(hardwareLabel)}${size?' · '+esc(size):''}</span><span class="lc-scoped-version">${esc(version)}</span></div>
               <button type="button" class="lc-entry-action" data-evidence-preview="${previewId}" aria-haspopup="dialog" aria-label="${esc([label,config.hardware,version].filter(Boolean).join(' · '))}">${label} ${icon('arrow')}</button></div>
             ${dependencies.length?`<div class="lc-scoped-dependencies"><span>${tx('实测依赖','Tested dependencies')}</span><ul>${dependencies.map(dep=>`<li>${esc(dep)}</li>`).join('')}</ul></div>`:''}
             ${adaptation.length?`<p class="lc-scoped-adaptation"><b>${tx('适配','Adaptation')}</b> ${esc([...new Set(adaptation)].join(' · '))}</p>`:''}</li>`;
