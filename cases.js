@@ -58,13 +58,15 @@
     return {number:'',kind:source||commitVersion.test(raw)||commitVersion.test(commit??'')||/^(?:\S+ )?source(?:\b|@)/i.test(raw)?'source':''};
   }
   const seriesKey=value=>choiceKey(value).replace(/[- ](?=\d)/g,'');
-  const architectureType=value=>String(value||'').match(/(?:^|[^a-z\d])(dense|moe)(?=$|[^a-z\d])/i)?.[1].toLowerCase();
+  const architectureType=value=>String(value||'').match(/(?:^|[^a-z\d])(dense|moe|n[- ]?gram)(?=$|[^a-z\d])/i)?.[1].toLowerCase().replace(/[- ]/g,'');
   function modelIdentity(indexed,model={}) {
     const metadata=[model.architecture,indexed.model_architecture,indexed.model_group].filter(v=>typeof v==='string'&&v&&choiceKey(v)!=='unclassified');
     const types=new Set(metadata.map(architectureType).filter(Boolean));
-    const type=types.size===1?[...types][0]:'';
     const name=indexed.model||model.name||'';
-    const base=(indexed.model_series||indexed.model_family||metadata.at(-1)||'').split(/\s*[·+/]\s*/)[0].replace(/(?:^|[\s-]+)(?:dense|moe)$/i,'').trim();
+    // Editorial classification confirmed for this checkpoint only. It does not confer verification status.
+    const flashNext=/^(?:qwen\/)?qwen3\.8-flash-next$/i.test(name.trim());
+    const type=types.size===1?[...types][0]:!types.size&&flashNext?'ngram':'';
+    const base=(indexed.model_series||indexed.model_family||metadata.at(-1)||'').split(/\s*[·+/]\s*/)[0].replace(/(?:^|[\s-]+)(?:dense|moe|n[- ]?gram)$/i,'').trim();
     // A checkpoint can carry a more precise generation than its architecture
     // group. Only use an explicit size-delimited name from the same family.
     const checkpoint=name.split('/').at(-1).match(/^([a-z][a-z\d]*(?:[ -]?\d+)?(?:\.\d+)*)(?=-\d+(?:\.\d+)?[bB](?:$|[-_\s]))/i)?.[1];
@@ -316,16 +318,19 @@
   // Only reuse recommendation entries explicitly compiled for the matched configuration.
   // A series is a discovery filter, never a new scope for an evidence claim.
   function seriesRecommendations(index,filters) {
-    const groups=new Map(),unknownCheckpoints=new Set();
+    const groups=new Map(),namedCheckpoints=new Map();
     const canonical=name=>index.search.aliases.library[choiceKey(name)]||name;
     for(const c of index.cases){
       if(c.category==='workflow-benchmark')continue;
       for(const config of c.configurations){
         const metadata=config.searchConfig;
         if(!metadata||!configurationMatches(config,{...filters,model:''}))continue;
-        const type=config.type==='dense'?'Dense':config.type==='moe'?'MoE':'';
+        const type=({dense:'Dense',moe:'MoE',ngram:'N-gram'})[config.type];
         const base=type||'unknown';
-        if(!type&&metadata.model)unknownCheckpoints.add(metadata.model);
+        if((base==='unknown'||base==='N-gram')&&metadata.model){
+          if(!namedCheckpoints.has(base))namedCheckpoints.set(base,new Set());
+          namedCheckpoints.get(base).add(metadata.model);
+        }
         const exactFrameworks=new Set(metadata.frameworks.map(canonical));
         const libraries=config.libraries.filter(lib=>exactFrameworks.has(canonical(lib.name))&&
           (!filters.library||canonical(lib.name)===canonical(filters.library))&&(!filters.version||lib.version===filters.version));
@@ -357,7 +362,7 @@
       }
     }
     return [...groups].sort(([a],[b])=>a==='unknown'?1:b==='unknown'?-1:a.localeCompare(b))
-      .map(([architecture,rows])=>({architecture,checkpoints:architecture==='unknown'?[...unknownCheckpoints]:[],rows:[...rows.values()].sort((a,b)=>
+      .map(([architecture,rows])=>({architecture,checkpoints:[...(namedCheckpoints.get(architecture)||[])],rows:[...rows.values()].sort((a,b)=>
         Number(!!b.binding)-Number(!!a.binding)||(b.record.date||'').localeCompare(a.record.date||'')||a.record.id.localeCompare(b.record.id))}));
   }
   const verificationBindings=(index,c)=>{

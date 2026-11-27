@@ -8,7 +8,10 @@ const {modelIdentity,seriesRecommendations}=global.NumericBridgeCases;
 test('series normalization keeps checkpoint generations separate and does not guess unknown models',()=>{
   assert.deepEqual(modelIdentity({model:'Qwen/Qwen3-0.6B',model_group:'Qwen3 Dense'}),{series:'Qwen3',type:'dense',traits:[]});
   assert.equal(modelIdentity({model:'Qwen/Qwen3-4B',model_group:'Qwen3 Dense'}).series,'Qwen3');
-  assert.equal(modelIdentity({model:'Qwen/Qwen3.8-27B',model_group:'Qwen3.5 Dense'}).series,'Qwen3.8');
+  assert.deepEqual(modelIdentity({model:'Qwen/Qwen3.8-27B',model_group:'Qwen3.5 Dense'}),{series:'Qwen3.8',type:'dense',traits:[]});
+  assert.equal(modelIdentity({model:'Qwen3.8-Flash-Next',model_group:'Qwen3.8'}).type,'ngram');
+  assert.equal(modelIdentity({model:' Other/Qwen3.8-Flash-Next ',model_group:'Qwen3.8'}).type,'');
+  assert.equal(modelIdentity({model:'Other-Model',model_group:'Other N-gram'}).type,'ngram');
   assert.equal(modelIdentity({model:'owner/Foo-4B',model_group:'unclassified'}).series,'owner/Foo-4B');
   assert.equal(modelIdentity({model:'owner/Foo-4B',model_group:'MoE'}).series,'owner/Foo-4B');
   assert.equal(modelIdentity({model:'unknown',model_group:'A Dense',model_architecture:'A MoE'}).type,'');

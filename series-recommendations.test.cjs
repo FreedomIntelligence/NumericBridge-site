@@ -203,7 +203,8 @@ describe('model series recommendations', { skip: !preview && 'Set NUMERICBRIDGE_
     const flash=results.getByRole('tab',{name:/Qwen3\.8-Flash-Next/});
     await flash.click();
     const flashPanel=results.getByRole('tabpanel');
-    assert.match(await flashPanel.innerText(),/架构未标注|Architecture not labeled/);
+    assert.match(await flashPanel.innerText(),/N-gram/);
+    assert.equal(await flashPanel.locator('[data-architecture="N-gram"]').count(),1);
     assert.match(await flashPanel.innerText(),/暂无已验证配置|No verified configuration yet/);
     assert.equal(await flashPanel.locator('[data-checkpoint]').count(),0);
 
