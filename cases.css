@@ -63,6 +63,18 @@
 #v-cases .lc-module-body{position:relative;flex:1;min-height:0;overflow:auto;scrollbar-width:thin}
 #v-cases .lc-module-empty{flex:1;display:grid;place-items:center;text-align:center;margin:0;padding:4px;font-size:13px;color:var(--muted);opacity:.76}
 #v-cases .lc-module-body:has(>.lc-module-empty){display:flex;flex-direction:column}
+#v-cases .lc-module-body[data-tabbed-recommendations]{display:flex;flex-direction:column;overflow:hidden}
+#v-cases .lc-rec-tabs{display:flex;align-items:center;gap:5px;flex:none;overflow-x:auto;scrollbar-width:thin;padding:2px 2px 6px;border-bottom:1px solid var(--hair);margin-bottom:4px}
+#v-cases .lc-rec-tabs button{flex:none;max-width:100%;display:flex;align-items:center;gap:5px;padding:4px 8px;border:1px solid transparent;border-radius:6px;background:var(--wash);color:var(--muted);font:inherit;font-size:12px;overflow-wrap:anywhere;text-align:start;cursor:pointer}
+#v-cases .lc-rec-tabs [aria-selected=true]{border-color:var(--line);background:var(--paper);color:var(--ink);font-weight:600}
+#v-cases .lc-rec-tabs small{color:var(--muted);font-weight:400}
+#v-cases .lc-rec-panel{flex:1;min-height:0;overflow:auto;scrollbar-width:thin}
+#v-cases .lc-rec-panel:focus-visible,#v-cases .lc-rec-tabs button:focus-visible{outline:2px solid var(--ink);outline-offset:-2px}
+#v-cases .lc-related .lc-module-body{overflow:visible}
+#v-cases .lc-related.lc-issue-paged .lc-problem{padding-block:5px}
+#v-cases .lc-issue-pagination{padding-top:5px}
+#v-cases .lc-issue-pagination .btn{padding-block:3px}
+@media(max-width:760px){#v-cases .lc-results>.lc-related:has(.lc-problem){height:auto;min-height:9rem}}
 #v-cases .lc-architecture{padding:4px 2px 10px}
 #v-cases .lc-architecture + .lc-architecture{border-top:1px solid var(--line);padding-top:10px}
 #v-cases .lc-architecture>h3{font-size:14px;font-weight:600;margin:0 0 8px}
@@ -110,6 +122,7 @@
 #v-cases .lc-evaluation-page{min-height:0;overflow:auto;scrollbar-width:thin}
 @media(min-width:761px){
   #v-cases .lc-results{align-self:stretch;contain:size;grid-template-rows:minmax(0,29fr) minmax(0,20fr) minmax(0,51fr)}
+  #v-cases .lc-results:has(.lc-issue-paged){grid-template-rows:minmax(0,29fr) minmax(9.5rem,20fr) minmax(0,51fr)}
   #v-cases .lc-results>.lc-recommendation,#v-cases .lc-results>.lc-related{height:auto}
   #v-cases .lc-evaluation-page,#v-cases .lc-evaluation-page.lc-multipage{height:auto;flex:1}
 }

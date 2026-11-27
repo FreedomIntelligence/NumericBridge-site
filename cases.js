@@ -802,7 +802,7 @@
       if(selected&&selectedIssue)query.set('issue',selectedIssue);
       if(selected&&selectedSolutionId)query.set('solution',selectedSolutionId);
       const url='#/cases'+(selected?'/'+encodeURIComponent(selected):'')+'?'+query.toString();
-      history[push?'pushState':'replaceState']({...history.state,numericBridgeCaseReturn:caseReturn||null,numericBridgeEvaluation:{filter:evaluationFilter,page:evaluationPage}},'',url);
+      history[push?'pushState':'replaceState']({...history.state,numericBridgeCaseReturn:caseReturn||null,numericBridgeEvaluation:{filter:evaluationFilter,page:evaluationPage},numericBridgeIssuePage:issuePage,numericBridgeRecommendationTab:recommendationTab},'',url);
       if(selected)detailHash=location.hash;
     }
     function solutionAction({solution_type:type,target}) {
@@ -950,6 +950,8 @@
       list.querySelectorAll('[data-case]').forEach(b=>b.setAttribute('aria-expanded',String(b.dataset.case===selected&&b.dataset.issue===selectedIssue)));
     }
     const evaluationsPerPage=8;
+    let issuePage=history.state?.numericBridgeIssuePage||0;
+    let recommendationTab=history.state?.numericBridgeRecommendationTab||'';
     const returnedPage=Number(hash.q.get('evaluation_page'));
     const fromEvaluation=Number.isSafeInteger(returnedPage)&&returnedPage>0;
     let evaluationFilter=fromEvaluation?JSON.stringify([...configurationFields,'series'].map(field=>state[field])):history.state?.numericBridgeEvaluation?.filter||'';
@@ -972,16 +974,22 @@
       evidenceTrigger=trigger;evidenceDrawer.showModal();updateLock();body.scrollTop=0;
       evidenceDrawer.querySelector('#lc-evidence-title').focus({preventScroll:true});
     }
-    const scopedModule=(groups)=>groups.length?groups.map(({architecture,rows})=>{
-      const heading=architecture==='unknown'?tx('架构未记录或无法确认','Architecture not recorded or uncertain'):
-        tx(architecture+' 推荐配置',architecture+' recommendations');
-      const byCheckpoint=new Map();
-      for(const row of rows){
-        const name=row.config.searchConfig.model;
-        if(!byCheckpoint.has(name))byCheckpoint.set(name,[]);
-        byCheckpoint.get(name).push(row);
-      }
-      const entries=[...byCheckpoint].map(([checkpoint,configs])=>{
+    function scopedModule(groups) {
+      const choices=groups.flatMap(({architecture,rows})=>{
+        const models=new Map();
+        for(const row of rows){
+          const name=row.config.searchConfig.model;
+          if(!models.has(name))models.set(name,[]);
+          models.get(name).push(row);
+        }
+        return models.size?[...models].map(([checkpoint,configs])=>({architecture,checkpoint,configs})):[{architecture,checkpoint:'',configs:[]}];
+      }).sort((a,b)=>Number(!!b.configs.length)-Number(!!a.configs.length));
+      if(!choices.length)return moduleEmpty(tx('暂无已验证配置','No verified configuration yet'));
+      const key=({architecture,checkpoint})=>JSON.stringify([architecture,checkpoint]);
+      const selected=Math.max(0,choices.findIndex(choice=>key(choice)===recommendationTab));
+      recommendationTab=key(choices[selected]);
+      const tabs=choices.length>1?`<div class="lc-rec-tabs" role="tablist" aria-label="${tx('推荐型号','Recommended checkpoints')}">${choices.map((choice,i)=>`<button type="button" role="tab" id="lc-rec-tab-${i}" aria-controls="lc-rec-panel-${i}" aria-selected="${i===selected}" tabindex="${i===selected?0:-1}" data-rec-choice="${esc(key(choice))}"><span>${esc(choice.checkpoint||architectureHeading(choice.architecture))}</span>${choice.checkpoint&&groups.length>1?`<small>${esc(choice.architecture==='unknown'?tx('架构未确认','Architecture uncertain'):choice.architecture)}</small>`:''}</button>`).join('')}</div>`:'';
+      const panels=choices.map(({architecture,checkpoint,configs},i)=>{
         const tested=configs.map(({config,library,binding,scope})=>{
           const data=config.searchConfig;
           const framework=canonical('library',library.name);
@@ -1002,14 +1010,17 @@
             ${dependencies.length?`<div class="lc-scoped-dependencies"><span>${tx('实测依赖','Tested dependencies')}</span><ul>${dependencies.map(dep=>`<li>${esc(dep)}</li>`).join('')}</ul></div>`:''}
             ${adaptation.length?`<p class="lc-scoped-adaptation"><b>${tx('适配','Adaptation')}</b> ${esc([...new Set(adaptation)].join(' · '))}</p>`:''}</li>`;
         }).join('');
-        return `<article class="lc-scoped-recommendation"><h4>${esc(checkpoint)}</h4><ul class="lc-scoped-configs">${tested}</ul></article>`;
+        const heading=architectureHeading(architecture);
+        const entry=checkpoint?`<article class="lc-scoped-recommendation"><h4>${esc(checkpoint)}</h4><ul class="lc-scoped-configs">${tested}</ul></article>`:moduleEmpty(tx('暂无已验证配置','No verified configuration yet'));
+        return `<div class="lc-rec-panel" id="lc-rec-panel-${i}"${tabs?` role="tabpanel" aria-labelledby="lc-rec-tab-${i}"`:''} tabindex="0"${i===selected?'':' hidden'}><section class="lc-architecture" data-architecture="${esc(architecture)}"><h3>${esc(heading)}</h3>${entry}</section></div>`;
       }).join('');
-      return `<section class="lc-architecture" data-architecture="${esc(architecture)}"><h3>${esc(heading)}</h3>${entries||moduleEmpty(tx('暂无已验证配置','No verified configuration yet'))}</section>`;
-    }).join(''):moduleEmpty(tx('暂无已验证配置','No verified configuration yet'));
+      return tabs+panels;
+    }
+    const architectureHeading=architecture=>architecture==='unknown'?tx('架构未记录或无法确认','Architecture not recorded or uncertain'):tx(architecture+' 推荐配置',architecture+' recommendations');
     const moduleEmpty=text=>`<p class="lc-module-empty">${esc(text)}</p>`;
     function render(syncURL=true) {
       const filterKey=JSON.stringify([...configurationFields,'series'].map(field=>state[field]));
-      if(filterKey!==evaluationFilter){evaluationFilter=filterKey;evaluationPage=0;}
+      if(filterKey!==evaluationFilter){evaluationFilter=filterKey;evaluationPage=0;issuePage=0;recommendationTab='';}
       refreshSelectors();
       evidenceRows=[];
       const grouped=state.series?seriesRecommendations(index,state):null;
@@ -1018,7 +1029,7 @@
       const issues=configurationIssues(index,recommendation?{...state,version:recommendation.library.version||''}:state);
       const ready=['hardware','model','library'].every(field=>state[field]);
       const section=root.querySelector('.lc-recommendation');
-      section.innerHTML=`<h2 id="lc-recommendation-title">${tx('推荐配置','Recommended configuration')}${showingExample?` <span class="lc-badge" data-example-label>${tx('示例','Example')}</span>`:''}</h2><div class="lc-module-body"${grouped?' tabindex="0" aria-labelledby="lc-recommendation-title" role="region"':''}>`+(grouped?scopedModule(grouped):recommendation?(()=>{
+      section.innerHTML=`<h2 id="lc-recommendation-title">${tx('推荐配置','Recommended configuration')}${showingExample?` <span class="lc-badge" data-example-label>${tx('示例','Example')}</span>`:''}</h2><div class="lc-module-body"${grouped?' data-tabbed-recommendations':''}>`+(grouped?scopedModule(grouped):recommendation?(()=>{
         const {case:c,config,library,solution}=recommendation;
         const version=libraryVersion(library),requested=requestedVersion(state.version);
         const details=solution?'':`<button class="lc-entry-action" type="button" data-case="${esc(c.row.id)}" aria-haspopup="dialog">${tx('配置与验证详情','Configuration & verification')} ${icon('arrow')}</button>`;
@@ -1034,7 +1045,28 @@
         allowAlternatives=true;render();
         const target=section.querySelector('h2');target.tabIndex=-1;focusVisible(target);
       });
-      list.innerHTML=issues.map(({issue,case:c,config,libraries,resolution})=>{
+      const tabs=[...section.querySelectorAll('[role="tab"]')];
+      function selectRecommendation(tab){
+        recommendationTab=tab.dataset.recChoice;
+        for(const other of tabs){
+          other.setAttribute('aria-selected',String(other===tab));other.tabIndex=other===tab?0:-1;
+          section.querySelector('#'+other.getAttribute('aria-controls')).hidden=other!==tab;
+        }
+        if(!selected)writeURL();
+      }
+      for(const [i,tab] of tabs.entries()){
+        tab.onclick=()=>selectRecommendation(tab);
+        tab.onkeydown=event=>{
+          const next=event.key==='Home'?0:event.key==='End'?tabs.length-1:event.key==='ArrowLeft'?(i+tabs.length-1)%tabs.length:event.key==='ArrowRight'?(i+1)%tabs.length:-1;
+          if(next<0)return;
+          event.preventDefault();selectRecommendation(tabs[next]);tabs[next].focus();
+        };
+      }
+      // A shared issue URL should select the page containing that issue.
+      const linkedIssuePage=!syncURL&&requestedIssue?issues.findIndex(({issue})=>issue.id===requestedIssue):-1;
+      if(linkedIssuePage>=0)issuePage=linkedIssuePage;
+      issuePage=Math.max(0,Math.min(issuePage,issues.length-1));
+      list.innerHTML=issues.slice(issuePage,issuePage+1).map(({issue,case:c,config,libraries,resolution})=>{
         const versions=libraries.map(name=>{const lib=config.libraries.find(lib=>lib.name===name);return [name,lib&&libraryVersion(lib)].filter(Boolean).join(' ');});
         const text=description('issue',issue);
         const note=resolutionNote(resolution);
@@ -1044,6 +1076,21 @@
       const issueBody=list.parentElement;
       issueBody.querySelector('.lc-module-empty')?.remove();
       if(!issues.length)issueBody.insertAdjacentHTML('beforeend',moduleEmpty(tx('暂时没有相关的问题','No related issues yet')));
+      const related=issueBody.parentElement;
+      related.classList.toggle('lc-issue-paged',issues.length>1);
+      related.querySelector('[data-issue-pages]')?.remove();
+      if(issues.length>1){
+        related.insertAdjacentHTML('beforeend',`<nav class="lc-pagination lc-issue-pagination" data-issue-pages aria-label="${tx('相关问题分页','Related issue pages')}">
+          <button class="btn sm" type="button" data-issue-page="prev" ${issuePage===0?'disabled':''}>${tx('上一页','Previous')}</button>
+          <span role="status" tabindex="-1">${tx(`第 ${issuePage+1} / ${issues.length} 页`,`Page ${issuePage+1} of ${issues.length}`)}</span>
+          <button class="btn sm" type="button" data-issue-page="next" ${issuePage===issues.length-1?'disabled':''}>${tx('下一页','Next')}</button></nav>`);
+        related.querySelectorAll('[data-issue-page]').forEach(button=>button.onclick=()=>{
+          const direction=button.dataset.issuePage;
+          issuePage+=direction==='next'?1:-1;
+          render();
+          focusVisible(related.querySelector(`[data-issue-page="${direction}"]:not(:disabled)`)||related.querySelector('[data-issue-pages] [role="status"]'));
+        });
+      }
       const records=root.querySelector('[data-model-records]');
       const evaluations=filterCases(index,state).filter(c=>c.category!=='workflow-benchmark').flatMap(c=>{
         const matches=new Map();
@@ -1082,7 +1129,7 @@
       root.querySelectorAll('[data-evidence-preview]').forEach(button=>button.onclick=()=>openSettings(evidenceRows[Number(button.dataset.evidencePreview)],button));
       if(syncURL)writeURL();
     }
-    root.querySelector('[data-reset]').onclick=()=>{resetFilters();evaluationPage=0;state.q='';allowAlternatives=false;showingExample=false;render();};
+    root.querySelector('[data-reset]').onclick=()=>{resetFilters();evaluationPage=0;issuePage=0;recommendationTab='';state.q='';allowAlternatives=false;showingExample=false;render();};
     render(false);
     const requestedCase=requested&&index.cases.find(c=>c.row.id===requested);
     if(requestedCase)openCase(requestedCase,null,requestedIssue,hash.q.get('solution'));

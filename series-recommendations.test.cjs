@@ -138,6 +138,7 @@ describe('model series recommendations', { skip: !preview && 'Set NUMERICBRIDGE_
       assert.equal(page.url(), before);
 
       await visitCases(page,{series:'Qwen3',library:'vLLM',task:'inference'});
+      assert.equal(await results.getByRole('tab').count(),0);
       const group=results.locator('.lc-scoped-recommendation').filter({has:page.getByRole('heading',{name:'Qwen/Qwen3-1.7B',exact:true})});
       await group.waitFor();
       assert.equal(await group.getByRole('heading').count(),1);
@@ -168,6 +169,25 @@ describe('model series recommendations', { skip: !preview && 'Set NUMERICBRIDGE_
       }
     });
   }
+
+  test('checkpoint tabs show one panel and stay outside the settings scroll area', async t => {
+    const page=await pageFor(t,true);
+    await visitCases(page,{series:'GPT-2'});
+    const results=page.locator(recommendation);
+    const tabs=results.getByRole('tab');
+    await tabs.first().waitFor();
+    assert.equal(await tabs.count(),2);
+    assert.equal(await results.getByRole('tabpanel').count(),1);
+    const first=await results.getByRole('tabpanel').getByRole('heading',{level:4}).innerText();
+    await tabs.nth(1).tap();
+    assert.equal(await tabs.nth(1).getAttribute('aria-selected'),'true');
+    assert.equal(await results.getByRole('tabpanel').count(),1);
+    assert.notEqual(await results.getByRole('tabpanel').getByRole('heading',{level:4}).innerText(),first);
+    assert.equal(await results.getByRole('tabpanel').getByRole('tablist').count(),0);
+    await tabs.nth(1).press('ArrowLeft');
+    assert.equal(await tabs.first().getAttribute('aria-selected'),'true');
+    assert.equal(await results.getByRole('tabpanel').getByRole('heading',{level:4}).innerText(),first);
+  });
 
   test('unsupported MoE evidence, off-series records and mismatched versions cannot become recommendations', async t => {
     const page = await pageFor(t);

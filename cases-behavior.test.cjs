@@ -146,6 +146,13 @@ describe('public cases interactions', { skip: !preview && 'Set NUMERICBRIDGE_PRE
     await visitCases(page, '?' + new URLSearchParams({ hardware: 'Ascend 910C', model: 'Qwen3.5-9B-Base', library: 'MindSpeed', task: 'rl' }));
     const issue = 'issue-mindspeed-residual-peer-differences';
     const opener = '[data-issue="' + issue + '"]';
+    const pager=page.locator('[data-issue-pages]');
+    assert.match(await pager.getByRole('status').innerText(),/1 \/ 2/);
+    assert.equal(await page.locator('.lc-related [data-issue]').count(),1);
+    assert.equal(await page.locator(opener).count(),0);
+    await pager.locator('[data-issue-page="next"]').press('Enter');
+    assert.match(await pager.getByRole('status').innerText(),/2 \/ 2/);
+    assert.ok(await pager.locator('[data-issue-page="next"]').isDisabled());
     const listHash = hash(page);
     await page.locator(opener).press('Enter');
     await focused(page, '#lc-case-title');
@@ -156,6 +163,12 @@ describe('public cases interactions', { skip: !preview && 'Set NUMERICBRIDGE_PRE
     await focused(page, opener);
     assert.equal(hash(page), listHash);
     assert.equal(await page.locator(opener).getAttribute('aria-expanded'), 'false');
+    assert.match(await pager.getByRole('status').innerText(),/2 \/ 2/);
+    await page.setViewportSize({width:390,height:850});
+    await pager.locator('[data-issue-page="prev"]').click();
+    assert.match(await pager.getByRole('status').innerText(),/1 \/ 2/);
+    assert.equal(await page.locator('.lc-related [data-issue]').count(),1);
+    assert.ok(await page.locator('.lc-related .lc-module-body').evaluate(el=>el.scrollHeight<=el.clientHeight+1));
   });
 
   test('evaluation history stays newest first without displaying dates in the case lists', async t => {
