@@ -98,6 +98,13 @@
         counts:{issue:count('issue'),candidate:count('candidate'),verification:count('verification'),measurement:count('measurement')}};
     });
     if(searchMetadata){
+      // The raw evaluation can veto older compiled recommendation data. Keep
+      // the configuration for discovery and apply the veto to all consumers.
+      searchMetadata={...searchMetadata,cases:searchMetadata.cases.map(c=>({...c,configurations:c.configurations.map(config=>{
+        const {kind,id,recommendation_eligible}=config.record;
+        if(recommendation_eligible!==false&&!(kind==='comparison'&&records.get(key(kind,id))?.recommendation_eligible===false))return config;
+        return {...config,record:{...config.record,recommendation_eligible:false},recommendations:[]};
+      })}))};
       const configs=new Map(searchMetadata.cases.flatMap(c=>c.configurations).map(c=>[c.id,c]));
       for(const c of cases)for(const config of c.configurations){
         config.searchConfig=configs.get(`${config.kind}:${config.recordId}:${config.sideId??0}`);
@@ -184,7 +191,8 @@
           // record "passed" decision is supported; unknown acceptance stays out.
           const rows=record.comparisons?.filter(row=>row.side_ids?.includes(config.sideId))||[];
           const acceptancePassed=value=>value==='passed'||!!value&&typeof value==='object'&&(typeof value.passed==='boolean'?value.passed:/^(?:pass|passed|gap)$/i.test(String(value.verdict||'').trim()));
-          if (record.status==='completed'&&acceptancePassed(record.acceptance)&&record.scope_status!=='partial'&&record.whole_task_completed!==false&&
+          if (record.recommendation_eligible!==false&&record.status==='completed'&&acceptancePassed(record.acceptance)&&
+              record.scope_status!=='partial'&&record.whole_task_completed!==false&&
               rows.length&&rows.every(row=>row.metrics?.length&&Array.isArray(row.coverage)&&row.coverage.length&&
                 row.coverage.some(count=>Number.isFinite(count.expected)&&count.expected>0)&&
                 row.coverage.every(count=>Number.isFinite(count.observed)&&Number.isFinite(count.expected)&&count.expected>=0&&count.observed===count.expected))) add(null,null);
@@ -324,7 +332,7 @@
       if(c.category==='workflow-benchmark')continue;
       for(const config of c.configurations){
         const metadata=config.searchConfig;
-        if(!metadata||!configurationMatches(config,{...filters,model:''}))continue;
+        if(!metadata||metadata.record?.recommendation_eligible===false||!configurationMatches(config,{...filters,model:''}))continue;
         const type=({dense:'Dense',moe:'MoE',ngram:'N-gram'})[config.type];
         const base=type||'unknown';
         if((base==='unknown'||base==='N-gram')&&metadata.model){
@@ -1259,7 +1267,9 @@
         scope:verification.scope,workloads:workloads.map(w=>w.scope),environments:environments.map(r=>r.environment),results:groups,checks,coverage:covered,workload_coverage:workloadCoverage,limitations:limits};
     }
     if(!active())return;
-    paint(`<header class="lc-report-head"><p class="eyebrow">${(comparison?tx('评测明细','Evaluation details'):tx('复验明细','Verification details'))}</p><h1>${esc(title)}</h1><p>${meta.filter(Boolean).map(esc).join(' · ')}</p><div class="lc-report-actions"><button class="btn sm" type="button" data-report-copy>${tx('复制链接','Copy link')}</button><button class="btn sm" type="button" data-report-export>${tx('导出 JSON','Export JSON')}</button></div></header>${body}`);
+    const heading=comparison?.recommendation_eligible===false?tx('评测报告 · 不作为推荐','Evaluation report · Not a recommendation'):
+      comparison?tx('评测明细','Evaluation details'):tx('复验明细','Verification details');
+    paint(`<header class="lc-report-head"><p class="eyebrow">${heading}</p><h1>${esc(title)}</h1><p>${meta.filter(Boolean).map(esc).join(' · ')}</p><div class="lc-report-actions"><button class="btn sm" type="button" data-report-copy>${tx('复制链接','Copy link')}</button><button class="btn sm" type="button" data-report-export>${tx('导出 JSON','Export JSON')}</button></div></header>${body}`);
     root.querySelector('[data-report-copy]').onclick=e=>copyLink?.(global.location.href,e.currentTarget);
     root.querySelector('[data-report-export]').onclick=()=>{
       const url=URL.createObjectURL(new Blob([JSON.stringify(exportData,null,2)+'\n'],{type:'application/json'}));

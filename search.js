@@ -73,7 +73,7 @@
       }
       if(missing.length||row.category==='workflow-benchmark')continue;
       for(const config of row.configurations){
-        if(differences(config,normalized,true).length)continue;
+        if(config.record.recommendation_eligible===false||differences(config,normalized,true).length)continue;
         if(!(config.keys.model_identity??[key(config.model)]).includes(key(normalized.model))){
           if(config.recommendations.length)gaps.add('specific-model-required-for-recommendation');
           continue;
