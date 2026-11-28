@@ -26,7 +26,7 @@ the actual configuration. All assets are served locally.
 
 ## NumericBridge README supporters
 
-`readme-supporters-light.png` and `readme-supporters-dark.png` contain the six
+`readme-supporters-light.png` and `readme-supporters-dark.png` contain the seven
 acknowledged institutions on transparent canvases. Both variants use the same
 column starts and row centers. The dark version uses light lettering where the
 original lettering would blend into the page. The marks belong to their
@@ -40,3 +40,4 @@ respective owners.
 | China Merchants Lion Rock AI Lab | [Previously published NumericBridge artwork](https://github.com/FreedomIntelligence/NumericBridge/blob/efe48ac7f3fdd18f4c721820ff8eeab342e121af/docs/images/numericbridge-community.png) |
 | AutoKernel | [Color mark](https://autokernel.cn/images/logo.png) |
 | Shenzhen Research Institute of Big Data | [Color](https://www.sribd.cn/sites/default/files/2020-12/logo2.png) · [Light lettering](https://www.sribd.cn/sites/default/files/2020-12/%E7%BD%91%E7%AB%99logo%E7%99%BD%E5%AD%97.png) |
+| Huawei | [Official logo package](https://e.huawei.com/en/documents/campaign/ekit/1cca454877d04c8abdbeed5257cf0a99), vertical marks with dark and light lettering |
